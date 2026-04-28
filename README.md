@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# UNIO – Event Management Dashboard
 
-## Getting Started
+UNIO is a complete event management and coordination dashboard built with Next.js. It provides a centralized, persistent platform for organizers to plan, track, and execute events efficiently.
 
-First, run the development server:
+## 🚀 Features
+
+- **Centralized Data Store:** All actions (creating events, tasks, meetings, checking in participants) are saved using a global state layer powered by `localStorage`, allowing data to persist across page reloads.
+- **Dynamic Dashboard:** Real-time completion statistics, upcoming events, and active tasks automatically update based on your activity.
+- **Event Management:** Create, view, edit, and delete events with capacities, schedules, and specific types.
+- **Task Tracking:** Assign and track tasks for different events across your team. Drag-and-drop or cycle statuses between To Do, In Progress, and Done.
+- **Meeting Scheduler:** Track ongoing and upcoming coordination syncs and take notes for specific meetings.
+- **Participant Check-ins:** Manage event registrations and check participants in seamlessly. Export attendance data to CSV/Excel.
+- **Certificate Generator:** Integrated canvas editor (powered by Fabric.js) allows organizers to design, customize, and generate certificates for attendees directly within the platform.
+
+## 🛠️ Tech Stack
+
+- **Framework:** [Next.js](https://nextjs.org/) (App Router)
+- **Styling:** [Tailwind CSS](https://tailwindcss.com/)
+- **Animations:** [Framer Motion](https://www.framer.com/motion/)
+- **Icons:** [Lucide React](https://lucide.dev/)
+- **Certificate Editor:** [Fabric.js](http://fabricjs.com/)
+- **Drag & Drop:** [@dnd-kit](https://dndkit.com/)
+
+## 💻 Getting Started
+
+First, install the dependencies:
+
+```bash
+npm install
+```
+
+Then, run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. The application will automatically seed itself with sample data on your first visit!
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📦 Build for Production
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+To create an optimized production build:
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run build
+npm start
+```
