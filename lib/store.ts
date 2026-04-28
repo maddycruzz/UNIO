@@ -1,0 +1,529 @@
+// ─────────────────────────────────────────────────────────────
+// lib/store.ts — Centralised localStorage data layer for UNIO
+// Every dashboard page reads from / writes to this single file
+// so that data stays consistent across pages and survives
+// page refreshes.
+// ─────────────────────────────────────────────────────────────
+
+// ── Types ────────────────────────────────────────────────────
+
+export type EventStatus = "upcoming" | "ongoing" | "completed";
+export type EventType = "Cultural" | "Tech" | "Sports" | "Workshop" | "Conference" | "Other";
+
+export interface UnioEvent {
+  id: string;
+  name: string;
+  type: EventType;
+  description: string;
+  date: string;
+  venue: string;
+  participants: number;
+  capacity: number;
+  completion: number;
+  status: EventStatus;
+  tasksDone: number;
+  tasksTotal: number;
+  daysRemaining: number;
+  assignees: string[];
+  startDate?: string;
+  endDate?: string;
+  createdAt: string;
+}
+
+export type TaskStatus = "todo" | "inprogress" | "done";
+export type TaskPriority = "High" | "Medium" | "Low";
+
+export interface UnioTask {
+  id: string;
+  title: string;
+  event: string;
+  eventColor: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  due: string;
+  assignees: { i: string; c: string }[];
+  description: string;
+}
+
+export type MeetingStatus = "upcoming" | "ongoing" | "completed";
+
+export interface UnioMeeting {
+  id: string;
+  title: string;
+  event: string;
+  eventColor: string;
+  date: string;
+  time: string;
+  duration: number;
+  location: string;
+  status: MeetingStatus;
+  attendees: { i: string; c: string }[];
+  agenda: string;
+  notes: string;
+}
+
+export type ParticipantStatus = "checked-in" | "registered";
+
+export interface UnioParticipant {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  rollNo: string;
+  dept: string;
+  status: ParticipantStatus;
+  registeredAt: string;
+  checkedInAt?: string;
+  eventId: string;
+}
+
+export interface UserProfile {
+  name: string;
+  initials: string;
+}
+
+export interface ActivityItem {
+  id: string;
+  title: string;
+  time: string;
+  meta: string;
+  timestamp: number;
+}
+
+// ── Keys ─────────────────────────────────────────────────────
+
+const KEYS = {
+  events: "unio_events_v2",
+  tasks: "unio_tasks_v2",
+  meetings: "unio_meetings_v2",
+  participants: "unio_participants_v2",
+  profile: "unio_profile_v1",
+  activity: "unio_activity_v1",
+  seeded: "unio_seeded_v2",
+} as const;
+
+// ── Seed Data ────────────────────────────────────────────────
+
+const SEED_EVENTS: UnioEvent[] = [
+  {
+    id: "spring-fest-night-market",
+    name: "Spring Fest Night Market",
+    type: "Cultural",
+    description: "Night market featuring food stalls, performances, and club showcases across the quad.",
+    date: "Mar 28 · 7:00 PM",
+    venue: "Central Quad",
+    participants: 200,
+    capacity: 300,
+    completion: 78,
+    status: "upcoming",
+    tasksDone: 12,
+    tasksTotal: 16,
+    daysRemaining: 5,
+    assignees: ["AK", "MS", "JR"],
+    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+  },
+  {
+    id: "ai-campus-panel",
+    name: "AI in Campus Life Panel",
+    type: "Conference",
+    description: "Faculty, founders, and students discuss the role of AI on campus life.",
+    date: "Today · 5:30 PM",
+    venue: "Auditorium A",
+    participants: 160,
+    capacity: 200,
+    completion: 92,
+    status: "ongoing",
+    tasksDone: 18,
+    tasksTotal: 20,
+    daysRemaining: 0,
+    assignees: ["RS", "LT", "NP"],
+    createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
+  },
+  {
+    id: "founders-pitch-night",
+    name: "Founders Club Pitch Night",
+    type: "Tech",
+    description: "Student founders pitch to alumni, angels, and faculty mentors.",
+    date: "Tomorrow · 7:00 PM",
+    venue: "Innovation Hub",
+    participants: 120,
+    capacity: 150,
+    completion: 54,
+    status: "upcoming",
+    tasksDone: 7,
+    tasksTotal: 13,
+    daysRemaining: 1,
+    assignees: ["AK", "DL", "HS"],
+    createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
+  },
+  {
+    id: "intramural-sports-meet",
+    name: "Intramural Sports Meet",
+    type: "Sports",
+    description: "Full-day track and field meet bringing together intramural teams.",
+    date: "Apr 6 · 9:00 AM",
+    venue: "Main Stadium",
+    participants: 340,
+    capacity: 500,
+    completion: 100,
+    status: "completed",
+    tasksDone: 20,
+    tasksTotal: 20,
+    daysRemaining: 0,
+    assignees: ["CG", "VK", "RM"],
+    createdAt: new Date(Date.now() - 86400000 * 21).toISOString(),
+  },
+];
+
+const SEED_TASKS: UnioTask[] = [
+  { id: "t1", title: "Lock venue and timings", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "High", status: "done", due: "2026-03-15", assignees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }], description: "Confirm auditorium booking and finalize event timings with admin." },
+  { id: "t3", title: "Design posters and social assets", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "todo", due: "2026-03-28", assignees: [{ i: "JR", c: "#EC4899" }, { i: "AK", c: "#6366F1" }], description: "Create Instagram, WhatsApp, and print poster assets." },
+  { id: "t5", title: "Plan food stalls and logistics", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "inprogress", due: "2026-03-26", assignees: [{ i: "AK", c: "#6366F1" }], description: "Contact vendors and allocate stall positions on campus map." },
+  { id: "t7", title: "Confirm judges panel", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "High", status: "done", due: "2026-03-12", assignees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }], description: "Finalize 4 alumni + 2 faculty judges and share briefing doc." },
+  { id: "t11", title: "Coordinate AV and stage setup", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "High", status: "inprogress", due: "2026-03-27", assignees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }], description: "Ensure projector, mics, and livestream are configured." },
+  { id: "t12", title: "Finalize event schedule", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "Medium", status: "todo", due: "2026-04-01", assignees: [{ i: "AK", c: "#6366F1" }], description: "Create minute-by-minute schedule and share with all stakeholders." },
+  { id: "t9", title: "Send speaker invites", event: "AI in Campus Life Panel", eventColor: "#F59E0B", priority: "High", status: "done", due: "2026-03-08", assignees: [{ i: "RS", c: "#10B981" }, { i: "AK", c: "#6366F1" }], description: "Email confirmed speakers with schedule, venue, and logistics." },
+  { id: "t13", title: "Draft event communications", event: "AI in Campus Life Panel", eventColor: "#F59E0B", priority: "Low", status: "todo", due: "2026-04-05", assignees: [{ i: "AK", c: "#6366F1" }], description: "Write announcement posts for college newsletter and social media." },
+];
+
+const SEED_MEETINGS: UnioMeeting[] = [
+  {
+    id: "m1", title: "Spring Fest Kickoff Sync", event: "Spring Fest Night Market", eventColor: "#6366F1",
+    date: "2026-03-04", time: "10:00", duration: 60, location: "Room 204, Admin Block",
+    status: "completed",
+    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "SP", c: "#EC4899" }],
+    agenda: "1. Confirm venue booking\n2. Assign stall coordinators\n3. Set deadlines for design assets",
+    notes: "Venue confirmed for March 28. Riya to handle stall assignments by March 10. Design assets deadline set to March 20.",
+  },
+  {
+    id: "m2", title: "Judges Briefing — Pitch Night", event: "Founders Club Pitch Night", eventColor: "#10B981",
+    date: "2026-03-06", time: "15:30", duration: 45, location: "Innovation Hub, Level 2",
+    status: "completed",
+    attendees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }, { i: "DL", c: "#14B8A6" }],
+    agenda: "1. Walk judges through scoring rubric\n2. Confirm schedule and timings\n3. Share team bios",
+    notes: "All 6 judges confirmed. Scoring rubric approved. Bios to be collected by March 15.",
+  },
+  {
+    id: "m3", title: "AV & Stage Setup Review", event: "Founders Club Pitch Night", eventColor: "#10B981",
+    date: "2026-03-10", time: "11:00", duration: 30, location: "Google Meet",
+    status: "ongoing",
+    attendees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }],
+    agenda: "1. Projector and mic check\n2. Livestream configuration\n3. Run-of-show walkthrough",
+    notes: "",
+  },
+  {
+    id: "m4", title: "Speaker Prep Call — AI Panel", event: "AI in Campus Life Panel", eventColor: "#F59E0B",
+    date: "2026-03-12", time: "17:00", duration: 60, location: "Zoom",
+    status: "upcoming",
+    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "LT", c: "#8B5CF6" }],
+    agenda: "1. Introduce speakers to each other\n2. Walk through panel format\n3. Q&A prep and topic boundaries",
+    notes: "",
+  },
+  {
+    id: "m5", title: "Spring Fest Final Walkthrough", event: "Spring Fest Night Market", eventColor: "#6366F1",
+    date: "2026-03-20", time: "14:00", duration: 90, location: "Central Quad",
+    status: "upcoming",
+    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "SP", c: "#EC4899" }, { i: "JR", c: "#EC4899" }],
+    agenda: "1. Physical walkthrough of stall layout\n2. Check power and lighting setup\n3. Confirm emergency contacts",
+    notes: "",
+  },
+  {
+    id: "m6", title: "Post-Event Debrief", event: "AI in Campus Life Panel", eventColor: "#F59E0B",
+    date: "2026-04-08", time: "16:00", duration: 45, location: "Room 101, Student Center",
+    status: "upcoming",
+    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }],
+    agenda: "1. What went well\n2. What to improve\n3. Feedback from attendees",
+    notes: "",
+  },
+];
+
+const SEED_PARTICIPANTS: UnioParticipant[] = [
+  { id: "p1", name: "Ayaan Nizam", email: "ayaan@college.edu", phone: "9876543210", rollNo: "21CS001", dept: "CS", status: "checked-in", registeredAt: "2 days ago", checkedInAt: "Today 6:42 PM", eventId: "spring-fest-night-market" },
+  { id: "p2", name: "Priya Sharma", email: "priya@college.edu", phone: "9876543211", rollNo: "21CS042", dept: "CS", status: "checked-in", registeredAt: "2 days ago", checkedInAt: "Today 6:45 PM", eventId: "spring-fest-night-market" },
+  { id: "p3", name: "Rohan Mehta", email: "rohan@college.edu", phone: "9876543212", rollNo: "21EC015", dept: "ECE", status: "registered", registeredAt: "1 day ago", eventId: "spring-fest-night-market" },
+  { id: "p4", name: "Sneha Iyer", email: "sneha@college.edu", phone: "9876543213", rollNo: "21ME033", dept: "MECH", status: "registered", registeredAt: "1 day ago", eventId: "spring-fest-night-market" },
+  { id: "p5", name: "Karthik Raja", email: "karthik@college.edu", phone: "9876543214", rollNo: "21CS078", dept: "CS", status: "registered", registeredAt: "3 hrs ago", eventId: "spring-fest-night-market" },
+  { id: "p6", name: "Divya Krishnan", email: "divya@college.edu", phone: "9876543215", rollNo: "21IT022", dept: "IT", status: "checked-in", registeredAt: "3 days ago", checkedInAt: "Today 7:01 PM", eventId: "spring-fest-night-market" },
+  { id: "p7", name: "Arun Balaji", email: "arun@college.edu", phone: "9876543216", rollNo: "21CS090", dept: "CS", status: "registered", registeredAt: "2 days ago", eventId: "ai-campus-panel" },
+  { id: "p8", name: "Meera Nair", email: "meera@college.edu", phone: "9876543217", rollNo: "21EC044", dept: "ECE", status: "registered", registeredAt: "1 hr ago", eventId: "ai-campus-panel" },
+];
+
+const SEED_PROFILE: UserProfile = { name: "Ayaan", initials: "AK" };
+
+const SEED_ACTIVITY: ActivityItem[] = [
+  { id: "a1", title: "Spring Fest Night Market published", time: "12 min ago", meta: "Events · Capacity 200", timestamp: Date.now() - 720000 },
+  { id: "a2", title: "Design club standup moved to Studio B", time: "45 min ago", meta: "Meetings · Room change", timestamp: Date.now() - 2700000 },
+  { id: "a3", title: "QR check-ins exported for Hackathon Demo Day", time: "2 hours ago", meta: "Participants · CSV export", timestamp: Date.now() - 7200000 },
+];
+
+// ── Helpers ──────────────────────────────────────────────────
+
+function load<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save<T>(key: string, data: T): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // localStorage full or unavailable
+  }
+}
+
+// ── Seed on first visit ──────────────────────────────────────
+
+export function ensureSeeded(): void {
+  if (typeof window === "undefined") return;
+  if (localStorage.getItem(KEYS.seeded)) return;
+
+  // Migrate old keys if they exist
+  const oldEvents = localStorage.getItem("unio_events");
+  if (oldEvents) {
+    try {
+      const parsed = JSON.parse(oldEvents);
+      const migrated: UnioEvent[] = parsed.map((e: any) => ({
+        ...e,
+        capacity: e.capacity ?? 300,
+        createdAt: e.createdAt ?? new Date().toISOString(),
+      }));
+      save(KEYS.events, migrated);
+    } catch {
+      save(KEYS.events, SEED_EVENTS);
+    }
+  } else {
+    save(KEYS.events, SEED_EVENTS);
+  }
+
+  save(KEYS.tasks, SEED_TASKS);
+  save(KEYS.meetings, SEED_MEETINGS);
+  save(KEYS.participants, SEED_PARTICIPANTS);
+  save(KEYS.profile, SEED_PROFILE);
+  save(KEYS.activity, SEED_ACTIVITY);
+  localStorage.setItem(KEYS.seeded, "1");
+}
+
+// ── Events ───────────────────────────────────────────────────
+
+export function loadEvents(): UnioEvent[] {
+  ensureSeeded();
+  return load<UnioEvent[]>(KEYS.events, SEED_EVENTS);
+}
+
+export function saveEvents(events: UnioEvent[]): void {
+  save(KEYS.events, events);
+  notify("events");
+}
+
+export function getEventById(id: string): UnioEvent | undefined {
+  return loadEvents().find((e) => e.id === id);
+}
+
+export function addEvent(event: UnioEvent): void {
+  const events = loadEvents();
+  saveEvents([event, ...events]);
+  addActivity(`${event.name} created`, "Events · New event");
+}
+
+export function updateEvent(id: string, updates: Partial<UnioEvent>): void {
+  const events = loadEvents();
+  saveEvents(events.map((e) => (e.id === id ? { ...e, ...updates } : e)));
+}
+
+export function deleteEvent(id: string): void {
+  const events = loadEvents();
+  const ev = events.find((e) => e.id === id);
+  saveEvents(events.filter((e) => e.id !== id));
+  if (ev) addActivity(`${ev.name} deleted`, "Events · Removed");
+}
+
+// ── Tasks ────────────────────────────────────────────────────
+
+export function loadTasks(): UnioTask[] {
+  ensureSeeded();
+  return load<UnioTask[]>(KEYS.tasks, SEED_TASKS);
+}
+
+export function saveTasks(tasks: UnioTask[]): void {
+  save(KEYS.tasks, tasks);
+  notify("tasks");
+}
+
+export function addTask(task: UnioTask): void {
+  const tasks = loadTasks();
+  saveTasks([task, ...tasks]);
+  addActivity(`Task "${task.title}" added`, `Tasks · ${task.event}`);
+}
+
+export function updateTask(id: string, updates: Partial<UnioTask>): void {
+  const tasks = loadTasks();
+  saveTasks(tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+}
+
+export function deleteTask(id: string): void {
+  saveTasks(loadTasks().filter((t) => t.id !== id));
+}
+
+// ── Meetings ─────────────────────────────────────────────────
+
+export function loadMeetings(): UnioMeeting[] {
+  ensureSeeded();
+  return load<UnioMeeting[]>(KEYS.meetings, SEED_MEETINGS);
+}
+
+export function saveMeetings(meetings: UnioMeeting[]): void {
+  save(KEYS.meetings, meetings);
+  notify("meetings");
+}
+
+export function addMeeting(meeting: UnioMeeting): void {
+  const meetings = loadMeetings();
+  saveMeetings([...meetings, meeting]);
+  addActivity(`Meeting "${meeting.title}" scheduled`, `Meetings · ${meeting.event}`);
+}
+
+export function updateMeeting(id: string, updates: Partial<UnioMeeting>): void {
+  const meetings = loadMeetings();
+  saveMeetings(meetings.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+}
+
+export function deleteMeeting(id: string): void {
+  saveMeetings(loadMeetings().filter((m) => m.id !== id));
+}
+
+// ── Participants ─────────────────────────────────────────────
+
+export function loadParticipants(): UnioParticipant[] {
+  ensureSeeded();
+  return load<UnioParticipant[]>(KEYS.participants, SEED_PARTICIPANTS);
+}
+
+export function saveParticipants(participants: UnioParticipant[]): void {
+  save(KEYS.participants, participants);
+  notify("participants");
+}
+
+export function addParticipant(p: UnioParticipant): void {
+  const all = loadParticipants();
+  saveParticipants([p, ...all]);
+  addActivity(`${p.name} registered`, `Participants · ${p.dept}`);
+}
+
+export function updateParticipant(id: string, updates: Partial<UnioParticipant>): void {
+  const all = loadParticipants();
+  saveParticipants(all.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+}
+
+export function deleteParticipant(id: string): void {
+  saveParticipants(loadParticipants().filter((p) => p.id !== id));
+}
+
+export function getParticipantsForEvent(eventId: string): UnioParticipant[] {
+  return loadParticipants().filter((p) => p.eventId === eventId);
+}
+
+// ── Profile ──────────────────────────────────────────────────
+
+export function loadProfile(): UserProfile {
+  ensureSeeded();
+  return load<UserProfile>(KEYS.profile, SEED_PROFILE);
+}
+
+export function saveProfile(profile: UserProfile): void {
+  save(KEYS.profile, profile);
+  notify("profile");
+}
+
+// ── Activity ─────────────────────────────────────────────────
+
+export function loadActivity(): ActivityItem[] {
+  ensureSeeded();
+  return load<ActivityItem[]>(KEYS.activity, SEED_ACTIVITY);
+}
+
+export function addActivity(title: string, meta: string): void {
+  const items = loadActivity();
+  const now = Date.now();
+  const item: ActivityItem = {
+    id: `a-${now}`,
+    title,
+    time: "Just now",
+    meta,
+    timestamp: now,
+  };
+  // Keep latest 20
+  const updated = [item, ...items].slice(0, 20);
+  save(KEYS.activity, updated);
+  notify("activity");
+}
+
+// ── Dashboard Stats ──────────────────────────────────────────
+
+export function getDashboardStats() {
+  const events = loadEvents();
+  const tasks = loadTasks();
+  const participants = loadParticipants();
+  const meetings = loadMeetings();
+
+  return {
+    totalEvents: events.length,
+    activeTasks: tasks.filter((t) => t.status !== "done").length,
+    totalParticipants: participants.length,
+    upcomingMeetings: meetings.filter((m) => m.status === "upcoming").length,
+  };
+}
+
+export function getUpcomingEvents(): UnioEvent[] {
+  return loadEvents()
+    .filter((e) => e.status !== "completed")
+    .slice(0, 3);
+}
+
+// ── Event colors ─────────────────────────────────────────────
+
+const EVENT_COLOR_MAP: Record<string, string> = {
+  "Spring Fest Night Market": "#6366F1",
+  "Founders Club Pitch Night": "#10B981",
+  "AI in Campus Life Panel": "#F59E0B",
+  "Intramural Sports Meet": "#14B8A6",
+};
+
+export function getEventColor(eventName: string): string {
+  return EVENT_COLOR_MAP[eventName] ?? "#6366F1";
+}
+
+// ── Cross-component notification ─────────────────────────────
+
+function notify(domain: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("unio-store-change", { detail: { domain } }));
+}
+
+export function useStoreListener(callback: (domain: string) => void): void {
+  if (typeof window === "undefined") return;
+  const handler = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    callback(detail?.domain ?? "");
+  };
+  window.addEventListener("unio-store-change", handler);
+  // Note: caller should clean up — but for simplicity in this prototype
+  // we allow it. In production you'd return a cleanup function.
+}
+
+// Format relative time for activity items
+export function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days > 1 ? "s" : ""} ago`;
+}

@@ -1,26 +1,20 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  loadMeetings as storeLoadMeetings,
+  saveMeetings as storeSaveMeetings,
+  addMeeting as storeAddMeeting,
+  loadEvents,
+  getEventColor,
+  type UnioMeeting,
+  type MeetingStatus,
+} from "@/lib/store";
 
 // ─── Types ────────────────────────────────────────────────────────
 
-type MeetingStatus = "upcoming" | "ongoing" | "completed";
-
-type Meeting = {
-  id: string;
-  title: string;
-  event: string;
-  eventColor: string;
-  date: string;       // YYYY-MM-DD
-  time: string;       // HH:MM (24h)
-  duration: number;   // minutes
-  location: string;
-  status: MeetingStatus;
-  attendees: { i: string; c: string }[];
-  agenda: string;
-  notes: string;
-};
+type Meeting = UnioMeeting;
 
 // ─── Mock data ────────────────────────────────────────────────────
 
@@ -470,11 +464,18 @@ function CalendarView({ meetings, onSelectMeeting }: { meetings: Meeting[]; onSe
 // ─── Main Page ────────────────────────────────────────────────────
 
 export default function MeetingsPage() {
-  const [meetings, setMeetings]     = useState<Meeting[]>(MEETINGS);
+  const [meetings, setMeetings]     = useState<Meeting[]>([]);
   const [view, setView]             = useState<"list" | "calendar">("list");
   const [statusFilter, setSF]       = useState<"all" | MeetingStatus>("all");
   const [selectedMeeting, setSelected] = useState<Meeting | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
+
+  useEffect(() => {
+    setMeetings(storeLoadMeetings());
+    const handler = () => setMeetings(storeLoadMeetings());
+    window.addEventListener("unio-store-change", handler);
+    return () => window.removeEventListener("unio-store-change", handler);
+  }, []);
 
   const filtered = useMemo(() => meetings.filter(m => statusFilter === "all" || m.status === statusFilter), [meetings, statusFilter]);
 
@@ -486,12 +487,15 @@ export default function MeetingsPage() {
   };
 
   const saveNotes = (id: string, notes: string) => {
-    setMeetings(p => p.map(m => m.id === id ? { ...m, notes } : m));
+    const updated = meetings.map(m => m.id === id ? { ...m, notes } : m);
+    setMeetings(updated);
+    storeSaveMeetings(updated);
     setSelected(p => p ? { ...p, notes } : p);
   };
 
   const addMeeting = (m: Meeting) => {
-    setMeetings(p => [...p, m]);
+    storeAddMeeting(m);
+    setMeetings(storeLoadMeetings());
   };
 
   // Group list by date section
@@ -511,7 +515,7 @@ export default function MeetingsPage() {
   }, [filtered]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0F1117", padding: 24, fontFamily: "'DM Sans',system-ui,sans-serif", color: "white", maxWidth: 960, margin: "0 auto" }}>
+    <div style={{ fontFamily: "'DM Sans',system-ui,sans-serif", color: "white" }}>
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, gap: 16, flexWrap: "wrap" }}>
@@ -526,7 +530,7 @@ export default function MeetingsPage() {
       </div>
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 12, marginBottom: 20 }}>
         {[
           { label: "Total",     value: stats.total,     color: "#818CF8" },
           { label: "Upcoming",  value: stats.upcoming,  color: "#6366F1" },

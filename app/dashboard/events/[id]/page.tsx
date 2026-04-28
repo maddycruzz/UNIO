@@ -12,6 +12,7 @@ import {
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { getEventById, type UnioEvent } from "@/lib/store";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -41,16 +42,22 @@ const TEAM: Assignee[] = [
 
 const TABS = ["Overview", "Tasks", "Participants", "Meetings"] as const;
 
-const MOCK_EVENT = {
-  id: "spring-fest-night-market",
-  name: "Spring Fest Night Market",
-  type: "Cultural Fest",
-  date: "Mar 28 · 7:00 PM",
-  venue: "Central Quad",
-  participants: 200,
-  completion: 78,
+const DEFAULT_EVENT = {
+  id: "unknown",
+  name: "Event Not Found",
+  type: "Other" as const,
+  date: "—",
+  venue: "—",
+  participants: 0,
+  capacity: 0,
+  completion: 0,
   status: "upcoming" as EventStatus,
-  description: "An after-hours night market featuring student-run stalls, food, live performances, and interactive experiences across campus.",
+  description: "This event could not be found.",
+  tasksDone: 0,
+  tasksTotal: 0,
+  daysRemaining: 0,
+  assignees: [] as string[],
+  createdAt: new Date().toISOString(),
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -397,8 +404,18 @@ function SortableTask({
 
 export default function EventDetailPage() {
   const params = useParams();
+  const eventId = typeof params?.id === "string" ? params.id : "";
+  const storedEvent = useMemo(() => getEventById(eventId), [eventId]);
+  const event = useMemo(() => {
+    if (!storedEvent) return DEFAULT_EVENT;
+    return {
+      ...storedEvent,
+      type: storedEvent.type || "Other",
+    };
+  }, [storedEvent]);
+
   const [activeTab, setActiveTab]   = useState<(typeof TABS)[number]>("Overview");
-  const [divisions, setDivisions]   = useState<Division[]>(() => divisionPreset(MOCK_EVENT.type));
+  const [divisions, setDivisions]   = useState<Division[]>(() => divisionPreset(event.type));
   const [collapsed, setCollapsed]   = useState<string[]>([]);
   const [aiOpen, setAiOpen]         = useState(false);
   const [priorityFilter, setPF]     = useState<"All" | Priority>("All");
@@ -409,7 +426,6 @@ export default function EventDetailPage() {
   const [deadlineStates, setDLS]    = useState<Record<string, DeadlineState>>({});
 
   const sensors   = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  const event     = useMemo(() => ({ ...MOCK_EVENT, id: typeof params?.id === "string" ? params.id : MOCK_EVENT.id }), [params]);
   const totalTasks  = divisions.reduce((a, d) => a + d.tasks.length, 0);
   const doneTasks   = divisions.reduce((a, d) => a + d.tasks.filter(t => t.status === "Done").length, 0);
   const overallProg = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : event.completion;

@@ -1,39 +1,20 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  loadTasks as storeLoadTasks,
+  saveTasks as storeSaveTasks,
+  addTask,
+  loadEvents,
+  loadProfile,
+  getEventColor,
+  type UnioTask,
+  type TaskStatus,
+  type TaskPriority,
+} from "@/lib/store";
 
-type TaskStatus = "todo" | "inprogress" | "done";
-type TaskPriority = "High" | "Medium" | "Low";
-
-type Task = {
-  id: string;
-  title: string;
-  event: string;
-  eventColor: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-  due: string;
-  assignees: { i: string; c: string }[];
-  description: string;
-};
-
-const MY_TASKS: Task[] = [
-  { id: "t1",  title: "Lock venue and timings",           event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "High",   status: "done",       due: "2026-03-15", assignees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }], description: "Confirm auditorium booking and finalize event timings with admin." },
-  { id: "t3",  title: "Design posters and social assets", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "todo",       due: "2026-03-28", assignees: [{ i: "JR", c: "#EC4899" }, { i: "AK", c: "#6366F1" }], description: "Create Instagram, WhatsApp, and print poster assets." },
-  { id: "t5",  title: "Plan food stalls and logistics",   event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "inprogress", due: "2026-03-26", assignees: [{ i: "AK", c: "#6366F1" }], description: "Contact vendors and allocate stall positions on campus map." },
-  { id: "t7",  title: "Confirm judges panel",             event: "Founders Pitch Night",     eventColor: "#10B981", priority: "High",   status: "done",       due: "2026-03-12", assignees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }], description: "Finalize 4 alumni + 2 faculty judges and share briefing doc." },
-  { id: "t11", title: "Coordinate AV and stage setup",    event: "Founders Pitch Night",     eventColor: "#10B981", priority: "High",   status: "inprogress", due: "2026-03-27", assignees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }], description: "Ensure projector, mics, and livestream are configured." },
-  { id: "t12", title: "Finalize event schedule",          event: "Founders Pitch Night",     eventColor: "#10B981", priority: "Medium", status: "todo",       due: "2026-04-01", assignees: [{ i: "AK", c: "#6366F1" }], description: "Create minute-by-minute schedule and share with all stakeholders." },
-  { id: "t9",  title: "Send speaker invites",             event: "AI in Campus Life Panel",  eventColor: "#F59E0B", priority: "High",   status: "done",       due: "2026-03-08", assignees: [{ i: "RS", c: "#10B981" }, { i: "AK", c: "#6366F1" }], description: "Email confirmed speakers with schedule, venue, and logistics." },
-  { id: "t13", title: "Draft event communications",       event: "AI in Campus Life Panel",  eventColor: "#F59E0B", priority: "Low",    status: "todo",       due: "2026-04-05", assignees: [{ i: "AK", c: "#6366F1" }], description: "Write announcement posts for college newsletter and social media." },
-];
-
-const EVENT_COLORS: Record<string, string> = {
-  "Spring Fest Night Market": "#6366F1",
-  "Founders Pitch Night":     "#10B981",
-  "AI in Campus Life Panel":  "#F59E0B",
-};
+type Task = UnioTask;
 
 const PRIORITY_META: Record<TaskPriority, { color: string; bg: string }> = {
   High:   { color: "#EF4444", bg: "rgba(239,68,68,0.12)" },
@@ -168,12 +149,49 @@ function TaskRow({ task, onCycle, idx }: { task: Task; onCycle: (id: string, for
 }
 
 export default function MyTasksPage() {
-  const [tasks, setTasks]     = useState<Task[]>(MY_TASKS);
+  const [tasks, setTasks]     = useState<Task[]>([]);
   const [eventFilter, setEF]  = useState("All");
   const [statusFilter, setSF] = useState("All");
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskEvent, setNewTaskEvent] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>("Medium");
+  const profile = useMemo(() => loadProfile(), []);
+  const events = useMemo(() => loadEvents(), []);
+
+  useEffect(() => {
+    setTasks(storeLoadTasks());
+    const handler = () => setTasks(storeLoadTasks());
+    window.addEventListener("unio-store-change", handler);
+    return () => window.removeEventListener("unio-store-change", handler);
+  }, []);
 
   const cycleStatus = (id: string, forceTo?: TaskStatus) => {
-    setTasks(p => p.map(t => t.id !== id ? t : { ...t, status: forceTo ?? STATUS_CYCLE[t.status] }));
+    const updated = tasks.map(t => t.id !== id ? t : { ...t, status: forceTo ?? STATUS_CYCLE[t.status] });
+    setTasks(updated);
+    storeSaveTasks(updated);
+  };
+
+  const handleAddTask = () => {
+    if (!newTaskTitle.trim()) return;
+    const eventName = newTaskEvent || events[0]?.name || "General";
+    const task: Task = {
+      id: `t-${Date.now()}`,
+      title: newTaskTitle.trim(),
+      event: eventName,
+      eventColor: getEventColor(eventName),
+      priority: newTaskPriority,
+      status: "todo",
+      due: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
+      assignees: [{ i: profile.initials, c: "#6366F1" }],
+      description: "",
+    };
+    addTask(task);
+    setTasks(storeLoadTasks());
+    setNewTaskTitle("");
+    setNewTaskEvent("");
+    setNewTaskPriority("Medium");
+    setShowAddTask(false);
   };
 
   const byEvent = useMemo(() => {
@@ -206,15 +224,50 @@ export default function MyTasksPage() {
   ].filter(s => s.tasks.length > 0);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0F1117", padding: 24, fontFamily: "'DM Sans',system-ui,sans-serif", color: "white", maxWidth: 900, margin: "0 auto" }}>
+    <div style={{ fontFamily: "'DM Sans',system-ui,sans-serif", color: "white" }}>
 
-      <div style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,#6366F1,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800 }}>A</div>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: "-0.3px" }}>My Tasks</h1>
-          <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.35)" }}>Your responsibilities across all events</p>
+      <div style={{ marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,#6366F1,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800 }}>{profile.initials.charAt(0)}</div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: "-0.3px" }}>My Tasks</h1>
+            <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.35)" }}>Your responsibilities across all events</p>
+          </div>
         </div>
+        <button onClick={() => setShowAddTask(true)}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 12, background: "#6366F1", border: "none", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(99,102,241,0.4)" }}>
+          + Add Task
+        </button>
       </div>
+
+      {/* Add Task Modal */}
+      <AnimatePresence>
+        {showAddTask && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            style={{ marginBottom: 20, padding: 20, borderRadius: 16, border: "1px solid rgba(99,102,241,0.3)", background: "rgba(99,102,241,0.06)" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>New Task</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="Task title..."
+                style={{ flex: 2, minWidth: 180, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12, outline: "none" }} />
+              <select value={newTaskEvent} onChange={e => setNewTaskEvent(e.target.value)}
+                style={{ flex: 1, minWidth: 140, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12 }}>
+                <option value="">Select event...</option>
+                {events.map(ev => <option key={ev.id} value={ev.name}>{ev.name}</option>)}
+              </select>
+              <select value={newTaskPriority} onChange={e => setNewTaskPriority(e.target.value as TaskPriority)}
+                style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12 }}>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+              </select>
+              <button onClick={handleAddTask}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "#6366F1", border: "none", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
+              <button onClick={() => setShowAddTask(false)}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer" }}>Cancel</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div style={{ background: "linear-gradient(135deg,rgba(99,102,241,0.12),rgba(16,185,129,0.08))", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 20, padding: "20px 24px", marginBottom: 24, position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", top: -40, right: -40, width: 160, height: 160, borderRadius: "50%", background: "radial-gradient(circle,rgba(99,102,241,0.15),transparent 70%)", pointerEvents: "none" }} />
@@ -257,9 +310,9 @@ export default function MyTasksPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 24 }}>
         {Object.entries(byEvent).map(([name, evTasks]) => (
-          <EventProgressCard key={name} name={name} tasks={evTasks} color={EVENT_COLORS[name] ?? "#6366F1"}
+          <EventProgressCard key={name} name={name} tasks={evTasks} color={getEventColor(name)}
             isActive={eventFilter === name}
             onClick={() => setEF(p => p === name ? "All" : name)} />
         ))}
@@ -275,8 +328,8 @@ export default function MyTasksPage() {
         ))}
         {eventFilter !== "All" && (
           <button onClick={() => setEF("All")}
-            style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: `1px solid ${EVENT_COLORS[eventFilter]}40`, background: `${EVENT_COLORS[eventFilter]}12`, fontSize: 11, fontWeight: 600, color: EVENT_COLORS[eventFilter], cursor: "pointer" }}>
-            <div style={{ width: 5, height: 5, borderRadius: "50%", background: EVENT_COLORS[eventFilter] }} />
+            style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: `1px solid ${getEventColor(eventFilter)}40`, background: `${getEventColor(eventFilter)}12`, fontSize: 11, fontWeight: 600, color: getEventColor(eventFilter), cursor: "pointer" }}>
+            <div style={{ width: 5, height: 5, borderRadius: "50%", background: getEventColor(eventFilter) }} />
             {eventFilter} · Clear
           </button>
         )}

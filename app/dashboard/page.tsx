@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   motion,
   useInView,
@@ -20,6 +22,15 @@ import {
   X,
   ArrowLeftRight,
 } from "lucide-react";
+import {
+  getDashboardStats,
+  loadActivity,
+  getUpcomingEvents,
+  loadProfile,
+  formatRelativeTime,
+  type ActivityItem,
+  type UnioEvent,
+} from "@/lib/store";
 import {
   DndContext,
   closestCenter,
@@ -63,51 +74,8 @@ const DEFAULT_LAYOUT: WidgetConfig[] = [
 
 const LAYOUT_STORAGE_KEY = "unio-dashboard-layout-v1";
 
-const STATS = [
-  { label: "Total Events", value: 32, suffix: "", icon: CalendarRange },
-  { label: "Active Tasks", value: 18, suffix: "", icon: CheckSquare },
-  { label: "Participants", value: 1248, suffix: "", icon: Users },
-  { label: "Upcoming Meetings", value: 5, suffix: "", icon: Video },
-] as const;
-
-const RECENT_ACTIVITY = [
-  {
-    title: "Spring Fest Night Market published",
-    time: "12 min ago",
-    meta: "Events · Capacity 200",
-  },
-  {
-    title: "Design club standup moved to Studio B",
-    time: "45 min ago",
-    meta: "Meetings · Room change",
-  },
-  {
-    title: "QR check-ins exported for Hackathon Demo Day",
-    time: "2 hours ago",
-    meta: "Participants · CSV export",
-  },
-] as const;
-
-const UPCOMING_EVENTS = [
-  {
-    name: "AI in Campus Life Panel",
-    date: "Today · 5:30 PM",
-    location: "Auditorium A",
-    tag: "Panel",
-  },
-  {
-    name: "Founders Club Pitch Night",
-    date: "Tomorrow · 7:00 PM",
-    location: "Innovation Hub",
-    tag: "Pitch",
-  },
-  {
-    name: "Student Council Open Forum",
-    date: "Fri · 4:00 PM",
-    location: "Central Quad",
-    tag: "Community",
-  },
-] as const;
+const STAT_ICONS = [CalendarRange, CheckSquare, Users, Video];
+const STAT_LABELS = ["Total Events", "Active Tasks", "Participants", "Upcoming Meetings"] as const;
 
 const PARTICLES = new Array(16).fill(0).map((_, i) => ({
   id: i,
@@ -345,10 +313,42 @@ function SortableWidget({
 }
 
 export default function DashboardHome() {
+  const router = useRouter();
   const prefersReducedMotion = useReducedMotion();
-  const titleText = "Welcome back, Ayaan";
-  const typedTitle = useTypewriter(titleText, !prefersReducedMotion);
 
+  // Live data from store
+  const [stats, setStats] = useState({ totalEvents: 0, activeTasks: 0, totalParticipants: 0, upcomingMeetings: 0 });
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [upcoming, setUpcoming] = useState<UnioEvent[]>([]);
+  const [profileName, setProfileName] = useState("...");
+
+  useEffect(() => {
+    const refresh = () => {
+      setStats(getDashboardStats());
+      setActivity(loadActivity().slice(0, 3));
+      setUpcoming(getUpcomingEvents());
+      setProfileName(loadProfile().name);
+    };
+    refresh();
+    // Listen for store changes from other pages
+    const handler = () => refresh();
+    window.addEventListener("unio-store-change", handler);
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener("unio-store-change", handler);
+      window.removeEventListener("storage", handler);
+    };
+  }, []);
+
+  const STATS = [
+    { label: "Total Events" as const, value: stats.totalEvents, suffix: "", icon: CalendarRange },
+    { label: "Active Tasks" as const, value: stats.activeTasks, suffix: "", icon: CheckSquare },
+    { label: "Participants" as const, value: stats.totalParticipants, suffix: "", icon: Users },
+    { label: "Upcoming Meetings" as const, value: stats.upcomingMeetings, suffix: "", icon: Video },
+  ];
+
+  const titleText = `Welcome back, ${profileName}`;
+  const typedTitle = useTypewriter(titleText, !prefersReducedMotion);
   const [layout, setLayout] = useState<WidgetConfig[]>(DEFAULT_LAYOUT);
   const [hidden, setHidden] = useState<WidgetId[]>([]);
   const [editMode, setEditMode] = useState(false);
@@ -488,6 +488,7 @@ export default function DashboardHome() {
               gradient:
                 "from-indigo-500/80 via-violet-500/80 to-sky-400/80",
               icon: CalendarRange,
+              href: "/dashboard/events/new",
             },
             {
               label: "Add Task",
@@ -495,6 +496,7 @@ export default function DashboardHome() {
               gradient:
                 "from-emerald-500/80 via-teal-400/80 to-cyan-400/80",
               icon: CheckSquare,
+              href: "/dashboard/tasks",
             },
             {
               label: "Schedule Meeting",
@@ -502,6 +504,7 @@ export default function DashboardHome() {
               gradient:
                 "from-purple-500/80 via-fuchsia-500/80 to-rose-400/80",
               icon: Video,
+              href: "/dashboard/meetings",
             },
             {
               label: "Generate Certificate",
@@ -509,6 +512,7 @@ export default function DashboardHome() {
               gradient:
                 "from-amber-400/90 via-orange-500/80 to-rose-500/80",
               icon: FileBadge2,
+              href: "/dashboard/certificates",
             },
           ].map((action) => {
             const Icon = action.icon;
@@ -520,6 +524,7 @@ export default function DashboardHome() {
                 whileTap={{ scale: 0.98 }}
                 className="group relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.02] p-4 text-left shadow-[0_20px_55px_rgba(15,17,23,0.95)] backdrop-blur-sm"
                 type="button"
+                onClick={() => router.push(action.href)}
               >
                 <div
                   className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${action.gradient} opacity-60 transition-opacity duration-500 group-hover:opacity-90`}
@@ -611,9 +616,9 @@ export default function DashboardHome() {
             }}
             className="mt-4 space-y-3"
           >
-            {RECENT_ACTIVITY.map((item) => (
+            {activity.map((item) => (
               <motion.li
-                key={item.title}
+                key={item.id}
                 layout
                 variants={{
                   hidden: { opacity: 0, x: 40 },
@@ -636,7 +641,7 @@ export default function DashboardHome() {
                   </p>
                 </div>
                 <div className="ml-auto text-right text-[11px] text-slate-500">
-                  {item.time}
+                  {formatRelativeTime(item.timestamp)}
                 </div>
               </motion.li>
             ))}
@@ -686,9 +691,9 @@ export default function DashboardHome() {
             }}
             className="mt-4 space-y-3 text-sm"
           >
-            {UPCOMING_EVENTS.map((event) => (
+            {upcoming.map((event) => (
               <motion.li
-                key={event.name}
+                key={event.id}
                 layout
                 variants={{
                   hidden: { opacity: 0, scale: 0.96, y: 18 },
@@ -702,7 +707,8 @@ export default function DashboardHome() {
                     },
                   },
                 }}
-                className="group relative overflow-hidden rounded-2xl bg-navy/80 px-3 py-3 ring-1 ring-white/8 transition-transform duration-300 hover:-translate-y-0.5 hover:scale-[1.01] hover:shadow-[0_18px_55px_rgba(15,23,42,0.95)]"
+                className="group relative overflow-hidden rounded-2xl bg-navy/80 px-3 py-3 ring-1 ring-white/8 transition-transform duration-300 hover:-translate-y-0.5 hover:scale-[1.01] hover:shadow-[0_18px_55px_rgba(15,23,42,0.95)] cursor-pointer"
+                onClick={() => router.push(`/dashboard/events/${event.id}`)}
               >
                 <div className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-indigo via-purple-400 to-emerald" />
                 <div className="ml-3 flex items-start gap-3">
@@ -712,7 +718,7 @@ export default function DashboardHome() {
                   <div className="flex-1">
                     <p className="text-sm text-slate-100">{event.name}</p>
                     <p className="mt-0.5 text-xs text-slate-400">
-                      {event.location}
+                      {event.venue}
                     </p>
                     <div className="mt-2 inline-flex items-center gap-2">
                       <span className="inline-flex items-center rounded-full bg-indigo/20 px-2.5 py-1 text-[11px] font-medium text-indigo shadow-[0_0_0_1px_rgba(129,140,248,0.6)]">
@@ -720,14 +726,13 @@ export default function DashboardHome() {
                         {event.date}
                       </span>
                       <span className="inline-flex items-center rounded-full bg-emerald/15 px-2.5 py-1 text-[11px] font-medium text-emerald ring-1 ring-emerald/25">
-                        {event.tag}
+                        {event.type}
                       </span>
                     </div>
                   </div>
                 </div>
               </motion.li>
-            ))}
-          </motion.ul>
+            ))}          </motion.ul>
         </motion.section>
       );
     }
@@ -796,7 +801,7 @@ export default function DashboardHome() {
         ))}
       </div>
 
-      <div className="space-y-6 py-2 sm:py-0">
+      <div className="space-y-6">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
             Dashboard overview
