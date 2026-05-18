@@ -9,12 +9,13 @@ import {
   CheckCircle2, Clock3, BadgeCheck, Plus,
 } from "lucide-react";
 import {
-  loadEvents as storeLoadEvents,
-  deleteEvent,
   type UnioEvent,
   type EventStatus,
   type EventType,
 } from "@/lib/store";
+import { loadEvents as dbLoadEvents, deleteEvent as dbDeleteEvent } from "@/lib/db";
+import { useAuth } from "@/lib/auth";
+import { PermissionGate } from "@/lib/permissions";
 
 
 
@@ -40,29 +41,31 @@ function typeGradient(type: EventType) {
 
 export default function EventsPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [events, setEvents] = useState<UnioEvent[]>([]);
   const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]>("All");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   useEffect(() => {
-    setEvents(storeLoadEvents());
-    const handler = () => setEvents(storeLoadEvents());
+    const fetchEvents = async () => setEvents(await dbLoadEvents());
+    fetchEvents();
+    const handler = () => fetchEvents();
     window.addEventListener("unio-store-change", handler);
     return () => window.removeEventListener("unio-store-change", handler);
   }, []);
 
-  // FIX 6: no stagger animation on filter change — just instant opacity swap
+  const handleDelete = async (id: string) => {
+    await dbDeleteEvent(id);
+    setEvents((prev) => prev.filter((e) => e.id !== id));
+    setOpenMenu(null);
+  };
+
+  // No stagger animation on filter change — just instant opacity swap
   const filteredEvents = useMemo(() => {
     if (activeFilter === "All") return events;
     return events.filter((e) => e.status === activeFilter.toLowerCase() as EventStatus);
   }, [activeFilter, events]);
-
-  const handleDelete = (id: string) => {
-    deleteEvent(id);
-    setEvents(storeLoadEvents());
-    setOpenMenu(null);
-  };
 
   return (
     // FIX 1: removed p-6, using full width with proper layout
@@ -74,10 +77,12 @@ export default function EventsPage() {
           <h1 className="text-lg font-semibold tracking-tight text-white sm:text-xl">Events</h1>
           <p className="mt-1 text-xs text-slate-400 sm:text-sm">Plan, track, and analyze every event happening on campus.</p>
         </div>
-        <Link href="/dashboard/events/new"
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-500/40 ring-1 ring-indigo-400/60 hover:brightness-110 sm:text-sm">
-          <CalendarRange className="h-4 w-4" /> Create new event
-        </Link>
+        <PermissionGate action="events.create">
+          <Link href="/dashboard/events/new"
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-500/40 ring-1 ring-indigo-400/60 hover:brightness-110 sm:text-sm">
+            <CalendarRange className="h-4 w-4" /> Create new event
+          </Link>
+        </PermissionGate>
       </div>
 
       {/* FIX 1: Filter bar uses space better — filters left, count right, no wasted height */}
@@ -118,10 +123,12 @@ export default function EventsPage() {
             {activeFilter === "All" ? "Start by creating your first campus event." : `No ${activeFilter.toLowerCase()} events right now.`}
           </p>
           {activeFilter === "All" && (
-            <Link href="/dashboard/events/new"
-              className="mt-5 inline-flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-500/40 ring-1 ring-indigo-400/60 hover:brightness-110">
-              <Plus className="h-3.5 w-3.5" /> Create an event
-            </Link>
+            <PermissionGate action="events.create">
+              <Link href="/dashboard/events/new"
+                className="mt-5 inline-flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-indigo-500/40 ring-1 ring-indigo-400/60 hover:brightness-110">
+                <Plus className="h-3.5 w-3.5" /> Create an event
+              </Link>
+            </PermissionGate>
           )}
         </motion.div>
       ) : (
@@ -180,7 +187,9 @@ export default function EventsPage() {
                             className="absolute right-2 top-10 z-20 w-32 rounded-xl border border-white/15 bg-[#050711]/95 p-1 text-[11px] text-slate-100 shadow-[0_16px_40px_rgba(15,23,42,0.95)]">
                             <button type="button" className="flex w-full items-center rounded-lg px-2 py-1.5 hover:bg-white/10">Edit</button>
                             <button type="button" onClick={() => router.push(`/dashboard/events/${event.id}`)} className="flex w-full items-center rounded-lg px-2 py-1.5 hover:bg-white/10">View</button>
-                            <button type="button" onClick={() => handleDelete(event.id)} className="flex w-full items-center rounded-lg px-2 py-1.5 text-red-300 hover:bg-red-500/10">Delete</button>
+                            <PermissionGate action="events.delete">
+                              <button type="button" onClick={() => handleDelete(event.id)} className="flex w-full items-center rounded-lg px-2 py-1.5 text-red-300 hover:bg-red-500/10">Delete</button>
+                            </PermissionGate>
                           </motion.div>
                         )}
                       </AnimatePresence>

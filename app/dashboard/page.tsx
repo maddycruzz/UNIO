@@ -22,15 +22,13 @@ import {
   X,
   ArrowLeftRight,
 } from "lucide-react";
+import { formatRelativeTime, type ActivityItem, type UnioEvent } from "@/lib/store";
 import {
   getDashboardStats,
   loadActivity,
   getUpcomingEvents,
-  loadProfile,
-  formatRelativeTime,
-  type ActivityItem,
-  type UnioEvent,
-} from "@/lib/store";
+} from "@/lib/db";
+import { useAuth } from "@/lib/auth";
 import {
   DndContext,
   closestCenter,
@@ -317,20 +315,33 @@ export default function DashboardHome() {
   const prefersReducedMotion = useReducedMotion();
 
   // Live data from store
+  const { user } = useAuth();
+
+  // Role-based routing
+  useEffect(() => {
+    if (user?.role === "developer") {
+      router.push("/admin");
+    } else if (user?.role === "mate") {
+      router.push("/dashboard/my-work");
+    }
+  }, [user, router]);
   const [stats, setStats] = useState({ totalEvents: 0, activeTasks: 0, totalParticipants: 0, upcomingMeetings: 0 });
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [upcoming, setUpcoming] = useState<UnioEvent[]>([]);
-  const [profileName, setProfileName] = useState("...");
 
   useEffect(() => {
-    const refresh = () => {
-      setStats(getDashboardStats());
-      setActivity(loadActivity().slice(0, 3));
-      setUpcoming(getUpcomingEvents());
-      setProfileName(loadProfile().name);
+    const refresh = async () => {
+      const [s, a, u] = await Promise.all([
+        getDashboardStats(),
+        loadActivity(),
+        getUpcomingEvents(),
+      ]);
+      setStats(s);
+      setActivity(a.slice(0, 3));
+      setUpcoming(u);
     };
     refresh();
-    // Listen for store changes from other pages
+    // Re-fetch when any page mutates data
     const handler = () => refresh();
     window.addEventListener("unio-store-change", handler);
     window.addEventListener("storage", handler);
@@ -347,7 +358,7 @@ export default function DashboardHome() {
     { label: "Upcoming Meetings" as const, value: stats.upcomingMeetings, suffix: "", icon: Video },
   ];
 
-  const titleText = `Welcome back, ${profileName}`;
+  const titleText = `Welcome back, ${user?.name?.split(" ")[0] ?? "there"}`;
   const typedTitle = useTypewriter(titleText, !prefersReducedMotion);
   const [layout, setLayout] = useState<WidgetConfig[]>(DEFAULT_LAYOUT);
   const [hidden, setHidden] = useState<WidgetId[]>([]);

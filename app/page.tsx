@@ -59,12 +59,10 @@ export default function UnioLandingPage() {
               UNIO <span style={{ color: 'rgba(255,255,255,0.3)', fontWeight: 400 }}>Campus</span>
             </span>
           </div>
-          <div style={{ display: 'flex', gap: 32 }}>
-            {['How it works', 'Features', 'Get started'].map((l) => (
-              <a key={l} href={`#${l.toLowerCase().replace(/\s+/g, '-')}`} style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', textDecoration: 'none' }}>{l}</a>
-            ))}
+          <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+            <Link href="/login" style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, fontWeight: 600, textDecoration: 'none', letterSpacing: '-0.01em' }}>Login</Link>
+            <Link href="/login#signup" style={{ backgroundColor: '#6366F1', color: '#fff', padding: '8px 20px', borderRadius: 999, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', boxShadow: '0 4px 20px rgba(99,102,241,0.35)', textDecoration: 'none', display: 'inline-block' }}>Get started →</Link>
           </div>
-          <Link href="/dashboard" style={{ backgroundColor: '#6366F1', color: '#fff', padding: '8px 20px', borderRadius: 999, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', boxShadow: '0 4px 20px rgba(99,102,241,0.3)', textDecoration: 'none', display: 'inline-block' }}>Dashboard</Link>
         </div>
       </nav>
 
@@ -538,11 +536,11 @@ function FinalCTA() {
             </h2>
             <p style={{fontSize:16,color:'rgba(255,255,255,0.5)',maxWidth:480,margin:'0 auto 40px'}}>Join hundreds of campus clubs already using UNIO to run better events.</p>
             <div style={{display:'flex',flexWrap:'wrap',justifyContent:'center',gap:16}}>
-              <Link href="/dashboard" style={{display:'flex',alignItems:'center',gap:8,backgroundColor:'#6366F1',color:'#ffffff',padding:'14px 32px',borderRadius:999,fontSize:15,fontWeight:700,border:'none',cursor:'pointer',boxShadow:'0 8px 32px rgba(99,102,241,0.35)',textDecoration:'none'}}>
-                Enter Dashboard <ArrowRight size={16}/>
+              <Link href="/login" style={{display:'flex',alignItems:'center',gap:8,backgroundColor:'#6366F1',color:'#ffffff',padding:'14px 32px',borderRadius:999,fontSize:15,fontWeight:700,border:'none',cursor:'pointer',boxShadow:'0 8px 32px rgba(99,102,241,0.35)',textDecoration:'none'}}>
+                Sign Up Free <ArrowRight size={16}/>
               </Link>
-              <Link href="/dashboard" style={{backgroundColor:'rgba(255,255,255,0.06)',color:'#ffffff',padding:'14px 32px',borderRadius:999,fontSize:15,fontWeight:700,border:'1px solid rgba(255,255,255,0.12)',cursor:'pointer',textDecoration:'none'}}>
-                Explore Features
+              <Link href="/login" style={{backgroundColor:'rgba(255,255,255,0.06)',color:'#ffffff',padding:'14px 32px',borderRadius:999,fontSize:15,fontWeight:700,border:'1px solid rgba(255,255,255,0.12)',cursor:'pointer',textDecoration:'none'}}>
+                Log In
               </Link>
             </div>
           </div>

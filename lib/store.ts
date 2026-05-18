@@ -18,7 +18,8 @@ export interface UnioEvent {
   date: string;
   venue: string;
   participants: number;
-  capacity: number;
+  /** null/undefined = no participant limit. */
+  capacity: number | null;
   completion: number;
   status: EventStatus;
   tasksDone: number;
@@ -28,6 +29,8 @@ export interface UnioEvent {
   startDate?: string;
   endDate?: string;
   createdAt: string;
+  /** Optional cover image as a base64 data URL. Capped client-side; will move to blob storage when a backend exists. */
+  coverImage?: string;
 }
 
 export type TaskStatus = "todo" | "inprogress" | "done";
@@ -43,6 +46,10 @@ export interface UnioTask {
   due: string;
   assignees: { i: string; c: string }[];
   description: string;
+  /** Optional grouping shown on event detail page. */
+  division?: string;
+  /** Sort order within a division on event detail page. Lower = earlier. */
+  order?: number;
 }
 
 export type MeetingStatus = "upcoming" | "ongoing" | "completed";
@@ -85,8 +92,8 @@ export interface UserProfile {
 export interface ActivityItem {
   id: string;
   title: string;
-  time: string;
   meta: string;
+  /** Render with formatRelativeTime() — do not cache a string. */
   timestamp: number;
 }
 
@@ -251,9 +258,9 @@ const SEED_PARTICIPANTS: UnioParticipant[] = [
 const SEED_PROFILE: UserProfile = { name: "Ayaan", initials: "AK" };
 
 const SEED_ACTIVITY: ActivityItem[] = [
-  { id: "a1", title: "Spring Fest Night Market published", time: "12 min ago", meta: "Events · Capacity 200", timestamp: Date.now() - 720000 },
-  { id: "a2", title: "Design club standup moved to Studio B", time: "45 min ago", meta: "Meetings · Room change", timestamp: Date.now() - 2700000 },
-  { id: "a3", title: "QR check-ins exported for Hackathon Demo Day", time: "2 hours ago", meta: "Participants · CSV export", timestamp: Date.now() - 7200000 },
+  { id: "a1", title: "Spring Fest Night Market published", meta: "Events · Capacity 200", timestamp: Date.now() - 720000 },
+  { id: "a2", title: "Design club standup moved to Studio B", meta: "Meetings · Room change", timestamp: Date.now() - 2700000 },
+  { id: "a3", title: "QR check-ins exported for Hackathon Demo Day", meta: "Participants · CSV export", timestamp: Date.now() - 7200000 },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -290,7 +297,8 @@ export function ensureSeeded(): void {
       const parsed = JSON.parse(oldEvents);
       const migrated: UnioEvent[] = parsed.map((e: any) => ({
         ...e,
-        capacity: e.capacity ?? 300,
+        // Old data used 9999 as "unlimited" sentinel — migrate to null.
+        capacity: e.capacity === 9999 ? null : (e.capacity ?? 300),
         createdAt: e.createdAt ?? new Date().toISOString(),
       }));
       save(KEYS.events, migrated);
@@ -384,7 +392,7 @@ export function saveMeetings(meetings: UnioMeeting[]): void {
 
 export function addMeeting(meeting: UnioMeeting): void {
   const meetings = loadMeetings();
-  saveMeetings([...meetings, meeting]);
+  saveMeetings([meeting, ...meetings]);
   addActivity(`Meeting "${meeting.title}" scheduled`, `Meetings · ${meeting.event}`);
 }
 
@@ -453,7 +461,6 @@ export function addActivity(title: string, meta: string): void {
   const item: ActivityItem = {
     id: `a-${now}`,
     title,
-    time: "Just now",
     meta,
     timestamp: now,
   };
@@ -503,17 +510,6 @@ export function getEventColor(eventName: string): string {
 function notify(domain: string): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent("unio-store-change", { detail: { domain } }));
-}
-
-export function useStoreListener(callback: (domain: string) => void): void {
-  if (typeof window === "undefined") return;
-  const handler = (e: Event) => {
-    const detail = (e as CustomEvent).detail;
-    callback(detail?.domain ?? "");
-  };
-  window.addEventListener("unio-store-change", handler);
-  // Note: caller should clean up — but for simplicity in this prototype
-  // we allow it. In production you'd return a cleanup function.
 }
 
 // Format relative time for activity items

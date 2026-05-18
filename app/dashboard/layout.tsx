@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { loadProfile, ensureSeeded } from "@/lib/store";
+import { ensureSeeded } from "@/lib/store";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useAuth } from "@/lib/auth";
 
 const NAV_ITEMS = [
   {
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   {
     id: "meetings", label: "Meetings", href: "/dashboard/meetings", accent: "#F59E0B",
     icon: (<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="6.5" cy="6" r="3" stroke="currentColor" strokeWidth="1.5"/><circle cx="13" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.5"/><path d="M1 15.5C1 12.7386 3.46243 11 6.5 11C9.53757 11 12 12.7386 12 15.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M13 10.5C15.2091 10.5 17 11.8431 17 15.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>),
+    roles: ["president", "developer"],
   },
   {
     id: "participants", label: "Participants", href: "/dashboard/participants", accent: "#EC4899",
@@ -30,12 +32,19 @@ const NAV_ITEMS = [
   {
     id: "certificates", label: "Certificates", href: "/dashboard/certificates", accent: "#14B8A6",
     icon: (<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="1.5" y="3" width="15" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.5"/><path d="M5.5 7H12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M5.5 10H9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M9 13V16.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M6.5 16.5H11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>),
+    roles: ["president", "developer"],
+  },
+  {
+    id: "team", label: "Team", href: "/dashboard/team", accent: "#8B5CF6",
+    icon: (<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M12 9C13.6569 9 15 7.65685 15 6C15 4.34315 13.6569 3 12 3C10.3431 3 9 4.34315 9 6C9 7.65685 10.3431 9 12 9Z" stroke="currentColor" strokeWidth="1.5"/><path d="M17 15C17 12.7909 14.7614 11 12 11C9.23858 11 7 12.7909 7 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M6 8C7.10457 8 8 7.10457 8 6C8 4.89543 7.10457 4 6 4C4.89543 4 4 4.89543 4 6C4 7.10457 4.89543 8 6 8Z" stroke="currentColor" strokeWidth="1.5"/><path d="M1.5 15C1.5 13.3431 3.17909 12 5.25 12C5.97235 12 6.64696 12.2037 7.21066 12.5516" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>),
+    roles: ["president", "developer"],
   },
 ];
 
 const BOTTOM_ITEMS = [
   { id: "settings", label: "Settings", href: "/dashboard/settings", icon: (<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.4"/><path d="M8 1.5V3M8 13V14.5M14.5 8H13M3 8H1.5M12.7 3.3L11.6 4.4M4.4 11.6L3.3 12.7M12.7 12.7L11.6 11.6M4.4 4.4L3.3 3.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>) },
   { id: "help", label: "Help", href: "/dashboard/help", icon: (<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.4"/><path d="M6 6.2C6 5.09543 6.89543 4.2 8 4.2C9.10457 4.2 10 5.09543 10 6.2C10 7.30457 9.10457 8.2 8 8.2V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><circle cx="8" cy="11.5" r="0.75" fill="currentColor"/></svg>) },
+  { id: "admin", label: "Platform Admin", href: "/admin", roles: ["developer"], icon: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>) },
 ];
 
 const SIDEBAR_W = 240;
@@ -43,6 +52,7 @@ const SIDEBAR_W_COL = 72;
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { user, loading, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
@@ -53,7 +63,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Seed store on first visit
   useEffect(() => { ensureSeeded(); }, []);
 
-  const profileData = useMemo(() => loadProfile(), []);
+  const profileData = useMemo(() => ({
+    name: user?.name ?? "...",
+    initials: user?.initials ?? "??",
+  }), [user]);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 60000);
@@ -67,9 +80,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const hours = time.getHours();
   const greeting = hours < 12 ? "Morning" : hours < 18 ? "Afternoon" : "Evening";
 
+  // Show nothing while auth is loading (prevents flash)
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366F1", animation: "spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
   const NavLinks = ({ mini }: { mini?: boolean }) => (
     <>
-      {NAV_ITEMS.map((item, idx) => {
+      {NAV_ITEMS.filter(item => !item.roles || (user?.role && item.roles.includes(user.role))).map((item, idx) => {
         const isActive = getActive(item.href);
         const isHov = hoveredItem === item.id;
         return (
@@ -131,6 +154,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         )}
       </div>
 
+      {user?.role === "developer" && !mini && (
+        <div style={{ margin: "12px 16px 0", padding: "10px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.3)", borderRadius: 8, display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: "#FCA5A5", letterSpacing: "0.05em", textTransform: "uppercase", fontWeight: 700 }}>Platform Admin</span>
+          <Link href="/admin" style={{ textDecoration: "none", fontSize: 12, color: "white", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+            Go to Admin <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6h8m-3-3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </Link>
+        </div>
+      )}
+
       {/* User strip */}
       {!mini && (
         <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0 }}>
@@ -174,7 +206,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           </Link>
         ))}
-        {!mini && <div style={{ marginTop: 8, padding: "0 12px", fontSize: 10, color: "rgba(255,255,255,0.15)", letterSpacing: "0.06em" }}>UNIO v0.2.0 — Beta</div>}
+        {!mini && (
+          <>
+            <button onClick={logout} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, cursor: "pointer", color: "rgba(255,255,255,0.25)", background: "none", border: "none", fontFamily: "inherit", fontSize: 12.5, fontWeight: 500, width: "100%", transition: "color 0.2s" }} onMouseEnter={e => e.currentTarget.style.color = "rgba(239,68,68,0.7)"} onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.25)"}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 2H3.5A1.5 1.5 0 002 3.5v9A1.5 1.5 0 003.5 14H6M10.5 11.5L14 8L10.5 4.5M14 8H6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Sign out
+            </button>
+            <div style={{ marginTop: 4, padding: "0 12px", fontSize: 10, color: "rgba(255,255,255,0.15)", letterSpacing: "0.06em" }}>UNIO v0.3.0</div>
+          </>
+        )}
       </div>
     </div>
   );

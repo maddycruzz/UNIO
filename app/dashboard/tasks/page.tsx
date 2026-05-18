@@ -3,16 +3,23 @@
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  loadTasks as storeLoadTasks,
-  saveTasks as storeSaveTasks,
-  addTask,
-  loadEvents,
   loadProfile,
   getEventColor,
   type UnioTask,
   type TaskStatus,
   type TaskPriority,
+  type UnioEvent,
 } from "@/lib/store";
+import {
+  loadTasks as dbLoadTasks,
+  saveTasks as dbSaveTasks,
+  addTask as dbAddTask,
+  loadEvents as dbLoadEvents,
+  loadTeamMembers,
+  type TeamMember,
+} from "@/lib/db";
+import { useAuth } from "@/lib/auth";
+import { PermissionGate } from "@/lib/permissions";
 
 type Task = UnioTask;
 
@@ -149,32 +156,70 @@ function TaskRow({ task, onCycle, idx }: { task: Task; onCycle: (id: string, for
 }
 
 export default function MyTasksPage() {
+  const { user } = useAuth();
   const [tasks, setTasks]     = useState<Task[]>([]);
+  const [events, setEvents]   = useState<UnioEvent[]>([]);
+  const [team, setTeam]       = useState<TeamMember[]>([]);
   const [eventFilter, setEF]  = useState("All");
   const [statusFilter, setSF] = useState("All");
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskEvent, setNewTaskEvent] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>("Medium");
+  const [newTaskAssignees, setNewTaskAssignees] = useState<string[]>([]);
+  const [showAssigneeDropdown, setShowAssigneeDropdown] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
   const profile = useMemo(() => loadProfile(), []);
-  const events = useMemo(() => loadEvents(), []);
 
   useEffect(() => {
-    setTasks(storeLoadTasks());
-    const handler = () => setTasks(storeLoadTasks());
+    if (profile?.initials && newTaskAssignees.length === 0) {
+      setNewTaskAssignees([profile.initials]);
+    }
+  }, [profile, newTaskAssignees]);
+
+  useEffect(() => {
+    const fetchTasks = async () => setTasks(await dbLoadTasks());
+    const fetchEvents = async () => setEvents(await dbLoadEvents());
+    const fetchTeam = async () => setTeam(await loadTeamMembers());
+    fetchTasks();
+    fetchEvents();
+    fetchTeam();
+    const handler = () => {
+      fetchTasks();
+      fetchEvents();
+      fetchTeam();
+    };
     window.addEventListener("unio-store-change", handler);
     return () => window.removeEventListener("unio-store-change", handler);
   }, []);
 
-  const cycleStatus = (id: string, forceTo?: TaskStatus) => {
-    const updated = tasks.map(t => t.id !== id ? t : { ...t, status: forceTo ?? STATUS_CYCLE[t.status] });
+  const cycleStatus = async (id: string, forceTo?: TaskStatus) => {
+    const updated = tasks.map((t) => t.id !== id ? t : { ...t, status: forceTo ?? STATUS_CYCLE[t.status] });
     setTasks(updated);
-    storeSaveTasks(updated);
+    await dbSaveTasks(updated);
   };
 
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     if (!newTaskTitle.trim()) return;
     const eventName = newTaskEvent || events[0]?.name || "General";
+    
+    // Choose beautiful background colors for avatars matching initials
+    const colors = ["#6366F1", "#EC4899", "#10B981", "#F59E0B", "#3B82F6", "#8B5CF6", "#EF4444"];
+    
+    const selectedInitials = newTaskAssignees.length > 0 ? newTaskAssignees : [profile.initials || "UN"];
+    const taskAssignees = selectedInitials.map(initials => {
+      const member = team.find(m => m.initials === initials);
+      const name = member ? member.name : "Me";
+      
+      const charCodeSum = initials.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+      const color = colors[charCodeSum % colors.length];
+      
+      return { i: initials, c: color, name };
+    });
+
+    const assigneeNames = taskAssignees.map(a => a.name).join(", ");
+
     const task: Task = {
       id: `t-${Date.now()}`,
       title: newTaskTitle.trim(),
@@ -183,15 +228,26 @@ export default function MyTasksPage() {
       priority: newTaskPriority,
       status: "todo",
       due: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
-      assignees: [{ i: profile.initials, c: "#6366F1" }],
-      description: "",
+      assignees: taskAssignees.map(a => ({ i: a.i, c: a.c })),
+      description: `Assigned to: ${assigneeNames}`,
     };
-    addTask(task);
-    setTasks(storeLoadTasks());
-    setNewTaskTitle("");
-    setNewTaskEvent("");
-    setNewTaskPriority("Medium");
-    setShowAddTask(false);
+    
+    setIsSubmitting(true);
+    setErrorMsg("");
+    
+    try {
+      await dbAddTask(task);
+      setTasks((prev) => [task, ...prev]);
+      setNewTaskTitle("");
+      setNewTaskEvent("");
+      setNewTaskPriority("Medium");
+      setNewTaskAssignees([profile.initials || "UN"]);
+      setShowAddTask(false);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to add task.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const byEvent = useMemo(() => {
@@ -204,13 +260,17 @@ export default function MyTasksPage() {
   }, [tasks]);
 
   const filtered = useMemo(() => tasks.filter(t => {
+    if (user?.role === "mate") {
+      const isAssigned = t.assignees.some(a => a.i === profile.initials);
+      if (!isAssigned) return false;
+    }
     if (eventFilter !== "All" && t.event !== eventFilter) return false;
     if (statusFilter !== "All") {
       const s: Record<string, TaskStatus> = { "To Do": "todo", "In Progress": "inprogress", "Done": "done" };
       if (t.status !== s[statusFilter]) return false;
     }
     return true;
-  }), [tasks, eventFilter, statusFilter]);
+  }), [tasks, eventFilter, statusFilter, user, profile.initials]);
 
   const total  = tasks.length;
   const done   = tasks.filter(t => t.status === "done").length;
@@ -234,10 +294,12 @@ export default function MyTasksPage() {
             <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.35)" }}>Your responsibilities across all events</p>
           </div>
         </div>
-        <button onClick={() => setShowAddTask(true)}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 12, background: "#6366F1", border: "none", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(99,102,241,0.4)" }}>
-          + Add Task
-        </button>
+        <PermissionGate action="tasks.create">
+          <button onClick={() => setShowAddTask(true)}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 12, background: "#6366F1", border: "none", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(99,102,241,0.4)" }}>
+            + Add Task
+          </button>
+        </PermissionGate>
       </div>
 
       {/* Add Task Modal */}
@@ -251,20 +313,99 @@ export default function MyTasksPage() {
                 style={{ flex: 2, minWidth: 180, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12, outline: "none" }} />
               <select value={newTaskEvent} onChange={e => setNewTaskEvent(e.target.value)}
                 style={{ flex: 1, minWidth: 140, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12 }}>
-                <option value="">Select event...</option>
-                {events.map(ev => <option key={ev.id} value={ev.name}>{ev.name}</option>)}
+                <option value="" style={{ background: "#13151F", color: "#ffffff" }}>Select event...</option>
+                {events.map(ev => <option key={ev.id} value={ev.name} style={{ background: "#13151F", color: "#ffffff" }}>{ev.name}</option>)}
               </select>
+              <div style={{ position: "relative", display: "inline-block" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAssigneeDropdown(p => !p)}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                    padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+                    background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12, cursor: "pointer",
+                    minWidth: 160, height: "100%", textAlign: "left", outline: "none"
+                  }}
+                >
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    Assignees: {newTaskAssignees.join(", ") || "None"}
+                  </span>
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" style={{ opacity: 0.6, flexShrink: 0 }}>
+                    <path d="M1 1L5 5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+                {showAssigneeDropdown && (
+                  <>
+                    <div
+                      onClick={() => setShowAssigneeDropdown(false)}
+                      style={{ position: "fixed", inset: 0, zIndex: 90 }}
+                    />
+                    <div
+                      style={{
+                        position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 100,
+                        background: "#13151F", border: "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: 12, padding: 8, minWidth: 200, maxHeight: 200, overflowY: "auto",
+                        boxShadow: "0 10px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5)"
+                      }}
+                    >
+                      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "rgba(255,255,255,0.3)", padding: "4px 8px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
+                        Select Team Members
+                      </div>
+                      {(team.length > 0 ? team : [{ id: "self", name: profile.name || "Me", initials: profile.initials || "UN" }]).map(member => {
+                        const isSelected = newTaskAssignees.includes(member.initials);
+                        return (
+                          <div
+                            key={member.id}
+                            onClick={() => {
+                              if (isSelected) {
+                                // Allow deselecting, but keep at least one assignee for validation safety
+                                if (newTaskAssignees.length > 1) {
+                                  setNewTaskAssignees(prev => prev.filter(i => i !== member.initials));
+                                }
+                              } else {
+                                setNewTaskAssignees(prev => [...prev, member.initials]);
+                              }
+                            }}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8, padding: "6px 8px",
+                              borderRadius: 6, cursor: "pointer", background: isSelected ? "rgba(99,102,241,0.1)" : "transparent",
+                              transition: "all 0.12s", userSelect: "none"
+                            }}
+                          >
+                            <div style={{
+                              width: 14, height: 14, borderRadius: 4, border: "1px solid rgba(255,255,255,0.25)",
+                              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                              background: isSelected ? "#6366F1" : "transparent", borderColor: isSelected ? "#6366F1" : "rgba(255,255,255,0.25)"
+                            }}>
+                              {isSelected && (
+                                <svg width="8" height="6" viewBox="0 0 8 6" fill="none">
+                                  <path d="M1 3L3 5L7 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
+                            </div>
+                            <span style={{ fontSize: 12, color: "white", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{member.name}</span>
+                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginLeft: "auto", flexShrink: 0 }}>({member.initials})</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
               <select value={newTaskPriority} onChange={e => setNewTaskPriority(e.target.value as TaskPriority)}
                 style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "white", fontSize: 12 }}>
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
+                <option value="High" style={{ background: "#13151F", color: "#ffffff" }}>High</option>
+                <option value="Medium" style={{ background: "#13151F", color: "#ffffff" }}>Medium</option>
+                <option value="Low" style={{ background: "#13151F", color: "#ffffff" }}>Low</option>
               </select>
-              <button onClick={handleAddTask}
-                style={{ padding: "8px 16px", borderRadius: 8, background: "#6366F1", border: "none", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
-              <button onClick={() => setShowAddTask(false)}
+              <button onClick={handleAddTask} disabled={isSubmitting}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "#6366F1", border: "none", color: "white", fontSize: 12, fontWeight: 700, cursor: isSubmitting ? "not-allowed" : "pointer", opacity: isSubmitting ? 0.6 : 1 }}>
+                {isSubmitting ? "Adding..." : "Add"}
+              </button>
+              <button onClick={() => setShowAddTask(false)} disabled={isSubmitting}
                 style={{ padding: "8px 16px", borderRadius: 8, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.5)", fontSize: 12, cursor: "pointer" }}>Cancel</button>
             </div>
+            {errorMsg && <div style={{ marginTop: 10, fontSize: 12, color: "#EF4444" }}>{errorMsg}</div>}
           </motion.div>
         )}
       </AnimatePresence>

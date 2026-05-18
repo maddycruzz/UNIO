@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown, ChevronLeft, ChevronRight, Search, Check,
@@ -8,7 +8,23 @@ import {
   Users, FolderUp, Settings2, Layers, LayoutTemplate, PanelLeftClose, PanelRightClose,
 } from 'lucide-react';
 import JSZip from 'jszip';
-import { EventInfo, Participant, MOCK_EVENTS, MOCK_PARTICIPANTS } from '@/components/certificates/types';
+import { EventInfo, Participant } from '@/components/certificates/types';
+import {
+  loadEvents,
+  loadParticipants,
+  type UnioEvent,
+  type UnioParticipant,
+} from '@/lib/store';
+
+const EMPTY_EVENT: EventInfo = { id: '', title: 'No events yet', date: '—', type: 'Other' };
+
+function toEventInfo(e: UnioEvent): EventInfo {
+  return { id: e.id, title: e.name, date: e.date, type: e.type };
+}
+
+function toCertParticipant(p: UnioParticipant): Participant {
+  return { id: p.id, name: p.name, email: p.email, rollNo: p.rollNo, dept: p.dept };
+}
 import { FabricProvider, useFabric } from '@/components/certificates/fabric-editor';
 import FabricCanvas from '@/components/certificates/fabric-editor/FabricCanvas';
 import EditorToolbar from '@/components/certificates/fabric-editor/Toolbar';
@@ -170,9 +186,10 @@ function SidePanel({ side, tabs, defaultWidth = 280 }: SidePanelProps) {
 // Main content
 // ──────────────────────────────────────────────────────────────────────────────
 function CertificatesContent() {
-  const [selectedEvent, setSelectedEvent] = useState<EventInfo>(MOCK_EVENTS[0]);
+  const [allEvents, setAllEvents] = useState<UnioEvent[]>([]);
+  const [allParticipants, setAllParticipants] = useState<UnioParticipant[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventInfo>(EMPTY_EVENT);
   const [showEventDD, setShowEventDD] = useState(false);
-  const [participants] = useState<Participant[]>(MOCK_PARTICIPANTS);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -192,6 +209,34 @@ function CertificatesContent() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvas]);
+
+  // Live store wiring: events + participants come from lib/store and
+  // refresh automatically when other pages change data.
+  useEffect(() => {
+    const refresh = () => {
+      const events = loadEvents();
+      setAllEvents(events);
+      setAllParticipants(loadParticipants());
+      setSelectedEvent((prev) => {
+        // Keep current selection if it still exists; otherwise default
+        // to the first event (or the empty placeholder).
+        const found = events.find((e) => e.id === prev.id);
+        if (found) return toEventInfo(found);
+        return events[0] ? toEventInfo(events[0]) : EMPTY_EVENT;
+      });
+    };
+    refresh();
+    window.addEventListener('unio-store-change', refresh);
+    return () => window.removeEventListener('unio-store-change', refresh);
+  }, []);
+
+  const events = useMemo(() => allEvents.map(toEventInfo), [allEvents]);
+  const participants = useMemo(
+    () => allParticipants
+      .filter((p) => !selectedEvent.id || p.eventId === selectedEvent.id)
+      .map(toCertParticipant),
+    [allParticipants, selectedEvent.id],
+  );
 
   const filtered = participants.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -448,7 +493,11 @@ function CertificatesContent() {
                     border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, overflow: 'hidden',
                     zIndex: 50, minWidth: 260, boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
                   }}>
-                  {MOCK_EVENTS.map(ev => (
+                  {events.length === 0 ? (
+                    <div style={{ padding: '14px 16px', fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                      No events yet. Create one from the Events page.
+                    </div>
+                  ) : events.map(ev => (
                     <button key={ev.id} onClick={() => selectEvent(ev)}
                       style={{
                         width: '100%', display: 'flex',

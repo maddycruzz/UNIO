@@ -7,12 +7,24 @@ import {
   CalendarRange, Code2, PartyPopper, Dumbbell,
   GraduationCap, Wand2, StickyNote, Infinity,
 } from "lucide-react";
-import { addEvent, type UnioEvent, type EventType } from "@/lib/store";
+import { type UnioEvent, type EventType } from "@/lib/store";
+import { addEvent } from "@/lib/db";
 
 type EventTypeId = "cultural" | "tech" | "sports" | "workshop" | "conference" | "other";
 type EventTypeOption = { id: EventTypeId; label: string; description: string; icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; gradient: string };
 type TaskItem = { id: string; label: string; done: boolean };
-type EventDetails = { name: string; description: string; startDate: string; endDate: string; venue: string; headcount: string; capacity: string; capacityUnlimited: boolean; coverName?: string };
+type EventDetails = { name: string; description: string; startDate: string; endDate: string; venue: string; headcount: string; capacity: string; capacityUnlimited: boolean; coverName?: string; coverDataUrl?: string };
+
+const MAX_COVER_BYTES = 2 * 1024 * 1024; // 2 MB — localStorage friendly
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 const EVENT_TYPES: EventTypeOption[] = [
   { id: "cultural",   label: "Cultural Fest",  description: "Fests, nights, performances, and campus celebrations.", icon: PartyPopper,   gradient: "from-indigo-500/80 via-violet-500/80 to-pink-500/80" },
@@ -22,6 +34,17 @@ const EVENT_TYPES: EventTypeOption[] = [
   { id: "conference", label: "Conference",     description: "Multi-track conferences and symposiums.",              icon: GraduationCap, gradient: "from-amber-400/90 via-orange-500/80 to-rose-500/80" },
   { id: "other",      label: "Other",          description: "Anything else your campus dreams up.",                 icon: StickyNote,    gradient: "from-slate-500/80 via-slate-400/80 to-slate-300/80" },
 ];
+
+// Explicit id → stored EventType so renaming a label can never silently
+// change how an event is categorised.
+const TYPE_ID_TO_EVENT_TYPE: Record<EventTypeId, EventType> = {
+  cultural:   "Cultural",
+  tech:       "Tech",
+  sports:     "Sports",
+  workshop:   "Workshop",
+  conference: "Conference",
+  other:      "Other",
+};
 
 const TASK_PRESETS: Record<EventTypeId, string[]> = {
   cultural:   ["Lock venue and timings", "Book performers / clubs", "Design posters and social assets", "Set up RSVP and ticketing", "Plan food stalls and logistics"],
@@ -45,6 +68,7 @@ export default function NewEventPage() {
   const [selectedType, setSelectedType] = useState<EventTypeOption | null>(null);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [details, setDetails] = useState<EventDetails>({ name: "", description: "", startDate: "", endDate: "", venue: "", headcount: "", capacity: "", capacityUnlimited: true });
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -73,20 +97,22 @@ export default function NewEventPage() {
     setTimeout(() => setStep(2), 220);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step === 4) {
       if (!validate()) return;
       // Save to shared store
-      const typeLabel = selectedType?.label.split(" ")[0] || "Other";
+      const eventType: EventType = selectedType
+        ? TYPE_ID_TO_EVENT_TYPE[selectedType.id]
+        : "Other";
       const newEvent: UnioEvent = {
         id: details.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") + "-" + Date.now(),
         name: details.name,
-        type: typeLabel as EventType,
+        type: eventType,
         description: details.description || "",
         date: details.startDate ? new Date(details.startDate).toLocaleDateString("en-IN", { month: "short", day: "numeric" }) + " · " + new Date(details.startDate).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "TBD",
         venue: details.venue,
         participants: 0,
-        capacity: details.capacityUnlimited ? 9999 : parseInt(details.capacity) || 300,
+        capacity: details.capacityUnlimited ? null : parseInt(details.capacity) || 300,
         completion: Math.round((tasks.filter(t => t.done).length / Math.max(tasks.length, 1)) * 100),
         status: "upcoming",
         tasksDone: tasks.filter(t => t.done).length,
@@ -96,10 +122,18 @@ export default function NewEventPage() {
         startDate: details.startDate,
         endDate: details.endDate,
         createdAt: new Date().toISOString(),
+        coverImage: details.coverDataUrl,
       };
-      addEvent(newEvent);
-      setShowToast(true);
-      setTimeout(() => { router.push("/dashboard/events"); }, 2200);
+      try {
+        setIsSubmitting(true);
+        // Make sure we wait for the insert to finish!
+        await addEvent(newEvent);
+        setShowToast(true);
+        setTimeout(() => { router.push("/dashboard/events"); }, 1500);
+      } catch (err: any) {
+        setIsSubmitting(false);
+        if (typeof window !== "undefined") alert("An unexpected error occurred: " + err.message);
+      }
       return;
     }
     if (step === 3 && !validate()) return;
@@ -258,11 +292,40 @@ export default function NewEventPage() {
                   </div>
                   <div>
                     <label className="text-xs text-slate-300">Cover image</label>
-                    <label className="mt-1 flex h-[38px] cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-500/70 bg-black/40 px-3 text-xs text-slate-200 hover:border-emerald/70">
-                      <span className="truncate">{details.coverName || "Upload (optional)"}</span>
-                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px]">Browse</span>
-                      <input type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; setDetails((p) => ({ ...p, coverName: f?.name })); }} />
+                    <label className="mt-1 flex h-[38px] cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-slate-500/70 bg-black/40 px-3 text-xs text-slate-200 hover:border-emerald/70">
+                      <div className="flex min-w-0 items-center gap-2">
+                        {details.coverDataUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={details.coverDataUrl} alt="" className="h-6 w-6 flex-none rounded object-cover ring-1 ring-white/10" />
+                        ) : null}
+                        <span className="truncate">{details.coverName || "Upload (optional)"}</span>
+                      </div>
+                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px]">{details.coverName ? "Change" : "Browse"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) {
+                            setDetails((p) => ({ ...p, coverName: undefined, coverDataUrl: undefined }));
+                            return;
+                          }
+                          if (f.size > MAX_COVER_BYTES) {
+                            setErrors((p) => ({ ...p, cover: `Image is too large (max ${MAX_COVER_BYTES / (1024 * 1024)} MB).` }));
+                            return;
+                          }
+                          try {
+                            const dataUrl = await readFileAsDataUrl(f);
+                            setDetails((p) => ({ ...p, coverName: f.name, coverDataUrl: dataUrl }));
+                            setErrors((p) => ({ ...p, cover: "" }));
+                          } catch {
+                            setErrors((p) => ({ ...p, cover: "Could not read the file." }));
+                          }
+                        }}
+                      />
                     </label>
+                    {errors.cover && <p className="mt-1 text-xs text-red-400">{errors.cover}</p>}
                   </div>
                 </div>
               </div>
@@ -333,9 +396,9 @@ export default function NewEventPage() {
             Back
           </button>
           {step > 1 && (
-            <button type="button" onClick={handleNext} disabled={!canGoNext}
+            <button type="button" onClick={handleNext} disabled={!canGoNext || isSubmitting}
               className="inline-flex items-center justify-center rounded-full bg-indigo px-4 py-1.5 text-[11px] font-semibold text-white shadow-[0_8px_24px_rgba(79,70,229,0.5)] ring-1 ring-indigo/60 disabled:opacity-40">
-              {step === 4 ? "Create event" : "Next"}
+              {step === 4 ? (isSubmitting ? "Creating..." : "Create event") : "Next"}
             </button>
           )}
         </div>

@@ -3,71 +3,27 @@
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  loadMeetings as storeLoadMeetings,
-  saveMeetings as storeSaveMeetings,
-  addMeeting as storeAddMeeting,
-  loadEvents,
   getEventColor,
   type UnioMeeting,
   type MeetingStatus,
+  type UnioEvent,
 } from "@/lib/store";
+import {
+  loadMeetings as dbLoadMeetings,
+  addMeeting as dbAddMeeting,
+  saveMeetings as dbSaveMeetings,
+  deleteMeeting as dbDeleteMeeting,
+  loadEvents as dbLoadEvents,
+} from "@/lib/db";
+import { useAuth } from "@/lib/auth";
+import { PermissionGate, can } from "@/lib/permissions";
+import Link from "next/link";
 
 // ─── Types ────────────────────────────────────────────────────────
 
 type Meeting = UnioMeeting;
 
-// ─── Mock data ────────────────────────────────────────────────────
-
-const MEETINGS: Meeting[] = [
-  {
-    id: "m1", title: "Spring Fest Kickoff Sync", event: "Spring Fest Night Market", eventColor: "#6366F1",
-    date: "2026-03-04", time: "10:00", duration: 60, location: "Room 204, Admin Block",
-    status: "completed",
-    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "SP", c: "#EC4899" }],
-    agenda: "1. Confirm venue booking\n2. Assign stall coordinators\n3. Set deadlines for design assets",
-    notes: "Venue confirmed for March 28. Riya to handle stall assignments by March 10. Design assets deadline set to March 20.",
-  },
-  {
-    id: "m2", title: "Judges Briefing — Pitch Night", event: "Founders Pitch Night", eventColor: "#10B981",
-    date: "2026-03-06", time: "15:30", duration: 45, location: "Innovation Hub, Level 2",
-    status: "completed",
-    attendees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }, { i: "DL", c: "#14B8A6" }],
-    agenda: "1. Walk judges through scoring rubric\n2. Confirm schedule and timings\n3. Share team bios",
-    notes: "All 6 judges confirmed. Scoring rubric approved. Bios to be collected by March 15.",
-  },
-  {
-    id: "m3", title: "AV & Stage Setup Review", event: "Founders Pitch Night", eventColor: "#10B981",
-    date: "2026-03-10", time: "11:00", duration: 30, location: "Google Meet",
-    status: "ongoing",
-    attendees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }],
-    agenda: "1. Projector and mic check\n2. Livestream configuration\n3. Run-of-show walkthrough",
-    notes: "",
-  },
-  {
-    id: "m4", title: "Speaker Prep Call — AI Panel", event: "AI in Campus Life Panel", eventColor: "#F59E0B",
-    date: "2026-03-12", time: "17:00", duration: 60, location: "Zoom",
-    status: "upcoming",
-    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "LT", c: "#8B5CF6" }],
-    agenda: "1. Introduce speakers to each other\n2. Walk through panel format\n3. Q&A prep and topic boundaries",
-    notes: "",
-  },
-  {
-    id: "m5", title: "Spring Fest Final Walkthrough", event: "Spring Fest Night Market", eventColor: "#6366F1",
-    date: "2026-03-20", time: "14:00", duration: 90, location: "Central Quad",
-    status: "upcoming",
-    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "SP", c: "#EC4899" }, { i: "JR", c: "#EC4899" }],
-    agenda: "1. Physical walkthrough of stall layout\n2. Check power and lighting setup\n3. Confirm emergency contacts",
-    notes: "",
-  },
-  {
-    id: "m6", title: "Post-Event Debrief", event: "AI in Campus Life Panel", eventColor: "#F59E0B",
-    date: "2026-04-08", time: "16:00", duration: 45, location: "Room 101, Student Center",
-    status: "upcoming",
-    attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }],
-    agenda: "1. What went well\n2. What to improve\n3. Feedback from attendees",
-    notes: "",
-  },
-];
+// Mock data removed — all meetings loaded from store via storeLoadMeetings()
 
 const STATUS_META: Record<MeetingStatus, { label: string; color: string; bg: string; dot: string }> = {
   upcoming:  { label: "Upcoming",  color: "#6366F1", bg: "rgba(99,102,241,0.12)",  dot: "#6366F1" },
@@ -124,7 +80,7 @@ function Avatar({ i, c, size = 26 }: { i: string; c: string; size?: number }) {
 
 // ─── Meeting Detail Modal ─────────────────────────────────────────
 
-function MeetingModal({ meeting, onClose, onSaveNotes }: { meeting: Meeting; onClose: () => void; onSaveNotes: (id: string, notes: string) => void }) {
+function MeetingModal({ meeting, onClose, onSaveNotes, onDelete }: { meeting: Meeting; onClose: () => void; onSaveNotes: (id: string, notes: string) => void; onDelete?: (id: string) => void }) {
   const [notes, setNotes]   = useState(meeting.notes);
   const [tab, setTab]       = useState<"agenda" | "notes">("agenda");
   const sm = STATUS_META[meeting.status];
@@ -153,7 +109,12 @@ function MeetingModal({ meeting, onClose, onSaveNotes }: { meeting: Meeting; onC
               </div>
               <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "white", letterSpacing: "-0.3px" }}>{meeting.title}</h2>
             </div>
-            <button onClick={onClose} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(255,255,255,0.5)", fontSize: 16, flexShrink: 0 }}>×</button>
+            <div style={{ display: "flex", gap: 6 }}>
+              {onDelete && (
+                <button onClick={() => { onDelete(meeting.id); onClose(); }} style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 8, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#f87171", fontSize: 14, flexShrink: 0 }} title="Delete meeting">🗑</button>
+              )}
+              <button onClick={onClose} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(255,255,255,0.5)", fontSize: 16, flexShrink: 0 }}>×</button>
+            </div>
           </div>
 
           {/* Meta row */}
@@ -227,25 +188,44 @@ function MeetingModal({ meeting, onClose, onSaveNotes }: { meeting: Meeting; onC
 
 // ─── Schedule Modal ───────────────────────────────────────────────
 
-function ScheduleModal({ onClose, onAdd }: { onClose: () => void; onAdd: (m: Meeting) => void }) {
-  const [form, setForm] = useState({ title: "", event: "Spring Fest Night Market", date: "", time: "", duration: "60", location: "", agenda: "" });
+function ScheduleModal({ onClose, onAdd, events }: { onClose: () => void; onAdd: (m: Meeting) => Promise<void>; events: UnioEvent[] }) {
+  const [form, setForm] = useState({ title: "", event: "", date: "", time: "", duration: "60", location: "", agenda: "", meetingLink: "" });
   const [step, setStep] = useState<"form" | "success">("form");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
-  const EVENTS = ["Spring Fest Night Market", "Founders Pitch Night", "AI in Campus Life Panel"];
-  const EVENT_COLORS: Record<string, string> = { "Spring Fest Night Market": "#6366F1", "Founders Pitch Night": "#10B981", "AI in Campus Life Panel": "#F59E0B" };
+  const EVENTS = events.map(e => e.name);
 
-  const handleSubmit = () => {
+  // Set default event
+  useEffect(() => {
+    if (!form.event && EVENTS.length > 0) {
+      setForm(prev => ({ ...prev, event: EVENTS[0] }));
+    }
+  }, [EVENTS.length]);
+
+  const handleSubmit = async () => {
     if (!form.title || !form.date || !form.time || !form.location) return;
     const newMeeting: Meeting = {
       id: "m-" + Date.now(), title: form.title, event: form.event,
-      eventColor: EVENT_COLORS[form.event] ?? "#6366F1",
+      eventColor: getEventColor(form.event),
       date: form.date, time: form.time, duration: parseInt(form.duration),
-      location: form.location, status: "upcoming",
+      location: form.meetingLink ? `${form.location} · ${form.meetingLink}` : form.location,
+      status: "upcoming",
       attendees: [{ i: "AK", c: "#6366F1" }],
       agenda: form.agenda, notes: "",
     };
-    onAdd(newMeeting);
-    setStep("success");
+    
+    setIsSubmitting(true);
+    setErrorMsg("");
+    
+    try {
+      await onAdd(newMeeting);
+      setStep("success");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to schedule meeting.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const inputStyle = { width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "10px 13px", fontSize: 13, color: "white", outline: "none", fontFamily: "inherit", boxSizing: "border-box" as const };
@@ -276,9 +256,18 @@ function ScheduleModal({ onClose, onAdd }: { onClose: () => void; onAdd: (m: Mee
               </div>
               <div>
                 <label style={labelStyle}>Event</label>
-                <select value={form.event} onChange={e => setForm(p => ({ ...p, event: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
-                  {EVENTS.map(ev => <option key={ev} value={ev} style={{ background: "#1a1d2e" }}>{ev}</option>)}
-                </select>
+                {EVENTS.length > 0 ? (
+                  <select value={form.event} onChange={e => setForm(p => ({ ...p, event: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
+                    {EVENTS.map(ev => <option key={ev} value={ev} style={{ background: "#13151F", color: "#ffffff" }}>{ev}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ ...inputStyle, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "rgba(255,255,255,0.35)" }}>No events found</span>
+                    <Link href="/dashboard/events" onClick={onClose} style={{ color: "#6366F1", textDecoration: "none", fontSize: 12, fontWeight: 700 }}>
+                      Create Event →
+                    </Link>
+                  </div>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
@@ -294,7 +283,7 @@ function ScheduleModal({ onClose, onAdd }: { onClose: () => void; onAdd: (m: Mee
                 <div>
                   <label style={labelStyle}>Duration</label>
                   <select value={form.duration} onChange={e => setForm(p => ({ ...p, duration: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
-                    {[15,30,45,60,90,120].map(d => <option key={d} value={d} style={{ background: "#1a1d2e" }}>{formatDuration(d)}</option>)}
+                    {[15,30,45,60,90,120].map(d => <option key={d} value={d} style={{ background: "#13151F", color: "#ffffff" }}>{formatDuration(d)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -303,14 +292,19 @@ function ScheduleModal({ onClose, onAdd }: { onClose: () => void; onAdd: (m: Mee
                 </div>
               </div>
               <div>
+                <label style={labelStyle}>Meeting Link (optional)</label>
+                <input value={form.meetingLink} onChange={e => setForm(p => ({ ...p, meetingLink: e.target.value }))} placeholder="https://zoom.us/... or Google Meet link" style={inputStyle} />
+              </div>
+              <div>
                 <label style={labelStyle}>Agenda (optional)</label>
                 <textarea value={form.agenda} onChange={e => setForm(p => ({ ...p, agenda: e.target.value }))} placeholder="1. Topic one&#10;2. Topic two" rows={3}
                   style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} />
               </div>
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={handleSubmit}
-                style={{ padding: "11px 0", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#6366F1,#818CF8)", color: "white", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(99,102,241,0.35)", marginTop: 4 }}>
-                Schedule Meeting
+              <motion.button whileHover={!isSubmitting && EVENTS.length > 0 ? { scale: 1.02 } : {}} whileTap={!isSubmitting && EVENTS.length > 0 ? { scale: 0.98 } : {}} onClick={handleSubmit} disabled={isSubmitting || EVENTS.length === 0}
+                style={{ padding: "11px 0", borderRadius: 12, border: "none", background: EVENTS.length > 0 ? "linear-gradient(135deg,#6366F1,#818CF8)" : "rgba(255,255,255,0.05)", borderStyle: EVENTS.length > 0 ? "none" : "solid", borderColor: "rgba(255,255,255,0.1)", borderWidth: EVENTS.length > 0 ? 0 : 1, color: EVENTS.length > 0 ? "white" : "rgba(255,255,255,0.25)", fontSize: 14, fontWeight: 700, cursor: isSubmitting || EVENTS.length === 0 ? "not-allowed" : "pointer", boxShadow: EVENTS.length > 0 ? "0 4px 16px rgba(99,102,241,0.35)" : "none", marginTop: 4, opacity: isSubmitting ? 0.6 : 1 }}>
+                {isSubmitting ? "Scheduling..." : EVENTS.length === 0 ? "Create an Event First" : "Schedule Meeting"}
               </motion.button>
+              {errorMsg && <div style={{ fontSize: 13, color: "#EF4444", textAlign: "center" }}>{errorMsg}</div>}
             </div>
           </>
         ) : (
@@ -464,15 +458,23 @@ function CalendarView({ meetings, onSelectMeeting }: { meetings: Meeting[]; onSe
 // ─── Main Page ────────────────────────────────────────────────────
 
 export default function MeetingsPage() {
+  const { user } = useAuth();
   const [meetings, setMeetings]     = useState<Meeting[]>([]);
+  const [events, setEvents]         = useState<UnioEvent[]>([]);
   const [view, setView]             = useState<"list" | "calendar">("list");
   const [statusFilter, setSF]       = useState<"all" | MeetingStatus>("all");
   const [selectedMeeting, setSelected] = useState<Meeting | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
 
   useEffect(() => {
-    setMeetings(storeLoadMeetings());
-    const handler = () => setMeetings(storeLoadMeetings());
+    const fetchMeetings = async () => setMeetings(await dbLoadMeetings());
+    const fetchEvents = async () => setEvents(await dbLoadEvents());
+    fetchMeetings();
+    fetchEvents();
+    const handler = () => {
+      fetchMeetings();
+      fetchEvents();
+    };
     window.addEventListener("unio-store-change", handler);
     return () => window.removeEventListener("unio-store-change", handler);
   }, []);
@@ -486,16 +488,20 @@ export default function MeetingsPage() {
     completed: meetings.filter(m => m.status === "completed").length,
   };
 
-  const saveNotes = (id: string, notes: string) => {
-    const updated = meetings.map(m => m.id === id ? { ...m, notes } : m);
-    setMeetings(updated);
-    storeSaveMeetings(updated);
+  const saveNotes = async (id: string, notes: string) => {
+    await dbSaveMeetings(meetings.map(m => m.id === id ? { ...m, notes } : m));
+    setMeetings((prev) => prev.map(m => m.id === id ? { ...m, notes } : m));
     setSelected(p => p ? { ...p, notes } : p);
   };
 
-  const addMeeting = (m: Meeting) => {
-    storeAddMeeting(m);
-    setMeetings(storeLoadMeetings());
+  const addMeeting = async (m: Meeting) => {
+    await dbAddMeeting(m);
+    setMeetings((prev) => [m, ...prev]);
+  };
+
+  const deleteMeeting = async (id: string) => {
+    await dbDeleteMeeting(id);
+    setMeetings((prev) => prev.filter(m => m.id !== id));
   };
 
   // Group list by date section
@@ -523,10 +529,12 @@ export default function MeetingsPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: "-0.3px" }}>Meetings</h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "rgba(255,255,255,0.4)" }}>Schedule and track all your event coordination meetings.</p>
         </div>
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setShowSchedule(true)}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#6366F1,#818CF8)", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}>
-          <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Schedule Meeting
-        </motion.button>
+        <PermissionGate action="meetings.create">
+          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setShowSchedule(true)}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#6366F1,#818CF8)", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}>
+            <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Schedule Meeting
+          </motion.button>
+        </PermissionGate>
       </div>
 
       {/* Stats row */}
@@ -597,10 +605,10 @@ export default function MeetingsPage() {
       {/* Modals */}
       <AnimatePresence>
         {selectedMeeting && (
-          <MeetingModal meeting={selectedMeeting} onClose={() => setSelected(null)} onSaveNotes={saveNotes} />
+          <MeetingModal meeting={selectedMeeting} onClose={() => setSelected(null)} onSaveNotes={saveNotes} onDelete={can(user?.role, "meetings.delete") ? (id) => { deleteMeeting(id); setSelected(null); } : undefined} />
         )}
         {showSchedule && (
-          <ScheduleModal onClose={() => setShowSchedule(false)} onAdd={addMeeting} />
+          <ScheduleModal onClose={() => setShowSchedule(false)} onAdd={addMeeting} events={events} />
         )}
       </AnimatePresence>
     </div>

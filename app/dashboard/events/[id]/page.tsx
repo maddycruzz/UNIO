@@ -12,7 +12,20 @@ import {
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { getEventById, type UnioEvent } from "@/lib/store";
+import {
+  getEventById,
+  loadTasks,
+  saveTasks,
+  addTask as storeAddTask,
+  updateTask as storeUpdateTask,
+  deleteTask as storeDeleteTask,
+} from "@/lib/db";
+import {
+  getEventColor,
+  type UnioEvent,
+  type UnioTask,
+  type TaskStatus as StoreTaskStatus,
+} from "@/lib/store";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -29,6 +42,43 @@ type Task = {
 type DeadlineState = { isOpen: boolean; date: string };
 type Division      = { id: string; name: string; color: string; tasks: Task[] };
 
+const DIVISION_PALETTE = [
+  "text-indigo-400", "text-emerald-400", "text-sky-400",
+  "text-amber-400", "text-pink-400", "text-violet-400",
+];
+
+const STATUS_LOCAL_TO_STORE: Record<TaskStatus, StoreTaskStatus> = {
+  "Todo": "todo",
+  "In Progress": "inprogress",
+  "Done": "done",
+};
+const STATUS_STORE_TO_LOCAL: Record<StoreTaskStatus, TaskStatus> = {
+  "todo": "Todo",
+  "inprogress": "In Progress",
+  "done": "Done",
+};
+
+function storeAssigneeToLocal(sa: { i: string; c: string }, team: Assignee[]): Assignee {
+  const found = team.find((t) => t.initials === sa.i);
+  if (found) return found;
+  return { id: `s-${sa.i}`, name: sa.i, initials: sa.i, color: sa.c };
+}
+
+function localAssigneeToStore(a: Assignee): { i: string; c: string } {
+  return { i: a.initials, c: a.color };
+}
+
+function storeTaskToLocal(st: UnioTask, team: Assignee[]): Task {
+  return {
+    id: st.id,
+    title: st.title,
+    assignees: st.assignees.map((sa) => storeAssigneeToLocal(sa, team)),
+    deadline: st.due,
+    priority: st.priority,
+    status: STATUS_STORE_TO_LOCAL[st.status],
+  };
+}
+
 // ─── Team ─────────────────────────────────────────────────────────
 
 const TEAM: Assignee[] = [
@@ -42,21 +92,21 @@ const TEAM: Assignee[] = [
 
 const TABS = ["Overview", "Tasks", "Participants", "Meetings"] as const;
 
-const DEFAULT_EVENT = {
+const DEFAULT_EVENT: UnioEvent = {
   id: "unknown",
   name: "Event Not Found",
-  type: "Other" as const,
+  type: "Other",
   date: "—",
   venue: "—",
   participants: 0,
   capacity: 0,
   completion: 0,
-  status: "upcoming" as EventStatus,
+  status: "upcoming",
   description: "This event could not be found.",
   tasksDone: 0,
   tasksTotal: 0,
   daysRemaining: 0,
-  assignees: [] as string[],
+  assignees: [],
   createdAt: new Date().toISOString(),
 };
 
@@ -84,30 +134,6 @@ function getDeadlineDisplay(deadline: string) {
   if (diff === 0) return { text: "Due Today",                    color: "text-amber-400 font-semibold", hasWarning: true };
   if (diff <= 3)  return { text: `Due in ${diff} days`,         color: "text-amber-300",               hasWarning: true };
   return           { text: label,                               color: "text-slate-300",               hasWarning: false };
-}
-
-function divisionPreset(type: string): Division[] {
-  const l = type.toLowerCase();
-  if (l.includes("tech")) {
-    return [
-      { id: "marketing", name: "Marketing", color: "text-indigo-400", tasks: [
-        { id: "m1", title: "Publish event page on UNIO",           assignees: [], deadline: "", priority: "High",   status: "In Progress" },
-        { id: "m2", title: "Share social assets with design club", assignees: [], deadline: "", priority: "Medium", status: "Todo" },
-      ]},
-      { id: "logistics", name: "Logistics", color: "text-emerald-400", tasks: [
-        { id: "l1", title: "Confirm AV setup with auditorium",     assignees: [], deadline: "", priority: "High",   status: "In Progress" },
-        { id: "l2", title: "Reserve breakout rooms for 1:1s",      assignees: [], deadline: "", priority: "Medium", status: "Todo" },
-      ]},
-      { id: "technical", name: "Technical", color: "text-sky-400", tasks: [
-        { id: "t1", title: "Set up recording + stream",            assignees: [], deadline: "", priority: "High",   status: "Todo" },
-      ]},
-    ];
-  }
-  return [
-    { id: "marketing", name: "Marketing", color: "text-indigo-400", tasks: [
-      { id: "gm1", title: "Announce event to student mailing list", assignees: [], deadline: "", priority: "Medium", status: "Todo" },
-    ]},
-  ];
 }
 
 // ─── AssigneePicker ───────────────────────────────────────────────
@@ -405,17 +431,8 @@ function SortableTask({
 export default function EventDetailPage() {
   const params = useParams();
   const eventId = typeof params?.id === "string" ? params.id : "";
-  const storedEvent = useMemo(() => getEventById(eventId), [eventId]);
-  const event = useMemo(() => {
-    if (!storedEvent) return DEFAULT_EVENT;
-    return {
-      ...storedEvent,
-      type: storedEvent.type || "Other",
-    };
-  }, [storedEvent]);
-
+  const [event, setEvent] = useState<UnioEvent>(DEFAULT_EVENT);
   const [activeTab, setActiveTab]   = useState<(typeof TABS)[number]>("Overview");
-  const [divisions, setDivisions]   = useState<Division[]>(() => divisionPreset(event.type));
   const [collapsed, setCollapsed]   = useState<string[]>([]);
   const [aiOpen, setAiOpen]         = useState(false);
   const [priorityFilter, setPF]     = useState<"All" | Priority>("All");
@@ -424,6 +441,62 @@ export default function EventDetailPage() {
   const [confirmDivisionId, setCDI] = useState<string | null>(null);
   const [priorityMenuKey, setPMK]   = useState<string | null>(null);
   const [deadlineStates, setDLS]    = useState<Record<string, DeadlineState>>({});
+
+  // Store-backed task list. All mutations go through lib/store; the
+  // unio-store-change event refreshes us so changes from other pages
+  // (wizard, tasks page) appear here immediately.
+  const [allTasks, setAllTasks]               = useState<UnioTask[]>([]);
+  const [extraDivisions, setExtraDivisions]   = useState<string[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const fetchedTasks = await loadTasks();
+      setAllTasks(fetchedTasks);
+      
+      if (eventId) {
+        const fetchedEvent = await getEventById(eventId);
+        if (fetchedEvent) {
+          setEvent({
+            ...fetchedEvent,
+            type: fetchedEvent.type || "Other",
+          });
+        }
+      }
+    };
+    fetchData();
+    window.addEventListener("unio-store-change", fetchData);
+    return () => window.removeEventListener("unio-store-change", fetchData);
+  }, [eventId]);
+
+  // Tasks for this event, sorted by stored `order` (stable for unset).
+  const eventTasks = useMemo(
+    () => allTasks
+      .filter((t) => t.event === event.name)
+      .toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    [allTasks, event.name],
+  );
+
+  // Group store tasks into divisions for display, including empty divisions
+  // the user has just added (which carry no tasks yet).
+  const divisions: Division[] = useMemo(() => {
+    const groups = new Map<string, UnioTask[]>();
+    for (const t of eventTasks) {
+      const key = t.division ?? "General";
+      const arr = groups.get(key) ?? [];
+      arr.push(t);
+      groups.set(key, arr);
+    }
+    for (const name of extraDivisions) {
+      if (!groups.has(name)) groups.set(name, []);
+    }
+    const entries = Array.from(groups.entries());
+    return entries.map(([name, tasks], i) => ({
+      id: name,
+      name,
+      color: DIVISION_PALETTE[i % DIVISION_PALETTE.length],
+      tasks: tasks.map((st) => storeTaskToLocal(st, TEAM)),
+    }));
+  }, [eventTasks, extraDivisions]);
 
   const sensors   = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const totalTasks  = divisions.reduce((a, d) => a + d.tasks.length, 0);
@@ -434,27 +507,121 @@ export default function EventDetailPage() {
 
   const toggleDL = (k: string) => setDLS(p => ({ ...p, [k]: { isOpen: !p[k]?.isOpen, date: p[k]?.date || "" } }));
   const updateDL = (k: string, date: string) => {
-    const [dId, tId] = k.split(":");
-    setDivisions(p => p.map(d => d.id !== dId ? d : { ...d, tasks: d.tasks.map(t => t.id !== tId ? t : { ...t, deadline: date }) }));
+    const tId = k.split(":")[1];
+    storeUpdateTask(tId, { due: date });
     setDLS(p => ({ ...p, [k]: { date, isOpen: false } }));
   };
 
-  const handleDragEnd = (divisionId: string, e: DragEndEvent) => {
+  const applyTaskChange = (taskId: string, updated: Task) => {
+    storeUpdateTask(taskId, {
+      title: updated.title,
+      priority: updated.priority,
+      status: STATUS_LOCAL_TO_STORE[updated.status],
+      due: updated.deadline,
+      assignees: updated.assignees.map(localAssigneeToStore),
+    });
+  };
+
+  const addTaskToDivision = (divisionName: string) => {
+    storeAddTask({
+      id: `t-${Date.now()}`,
+      title: "New task",
+      event: event.name,
+      eventColor: getEventColor(event.name),
+      priority: "Medium",
+      status: "todo",
+      due: "",
+      assignees: [],
+      description: "",
+      division: divisionName,
+      order: Date.now(),
+    });
+    // If this was a placeholder empty division, it'll start appearing
+    // naturally now that it has a task — drop it from extras.
+    setExtraDivisions((prev) => prev.filter((n) => n !== divisionName));
+  };
+
+  const renameDivision = async (oldName: string, newName: string) => {
+    if (!newName.trim() || newName === oldName) return;
+    const allTs = await loadTasks();
+    const tasks = allTs.map((t) =>
+      t.event === event.name && (t.division ?? "General") === oldName
+        ? { ...t, division: newName }
+        : t,
+    );
+    await saveTasks(tasks);
+    setExtraDivisions((prev) => prev.map((n) => (n === oldName ? newName : n)));
+  };
+
+  const deleteDivision = async (name: string) => {
+    const allTs = await loadTasks();
+    const tasks = allTs.filter(
+      (t) => !(t.event === event.name && (t.division ?? "General") === name),
+    );
+    await saveTasks(tasks);
+    setExtraDivisions((prev) => prev.filter((n) => n !== name));
+  };
+
+  const addEmptyDivision = () => {
+    let name = "New division";
+    let i = 1;
+    const taken = new Set(divisions.map((d) => d.name));
+    while (taken.has(name)) {
+      i += 1;
+      name = `New division ${i}`;
+    }
+    setExtraDivisions((prev) => [...prev, name]);
+  };
+
+  // Persist drag-reorder by rewriting `order` for the affected division.
+  const handleDragEnd = async (divisionName: string, e: DragEndEvent) => {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    setDivisions(prev => prev.map(div => {
-      if (div.id !== divisionId) return div;
-      const ids = div.tasks.map(t => `${divisionId}:${t.id}`);
-      const oi  = ids.indexOf(active.id as string);
-      const ni  = ids.indexOf(over.id as string);
-      return oi === -1 || ni === -1 ? div : { ...div, tasks: arrayMove(div.tasks, oi, ni) };
-    }));
+    const inDivision = eventTasks.filter(
+      (t) => (t.division ?? "General") === divisionName,
+    );
+    const ids = inDivision.map((t) => `${divisionName}:${t.id}`);
+    const oi = ids.indexOf(active.id as string);
+    const ni = ids.indexOf(over.id as string);
+    if (oi === -1 || ni === -1) return;
+    const reordered = arrayMove(inDivision, oi, ni);
+    const updates = new Map(
+      reordered.map((t, idx) => [t.id, idx] as const),
+    );
+    const allTs = await loadTasks();
+    const next = allTs.map((t) =>
+      updates.has(t.id) ? { ...t, order: updates.get(t.id) } : t,
+    );
+    await saveTasks(next);
   };
 
   const recommendations: Task[] = [
     { id: "ai-1", title: "Draft post-event feedback form",      assignees: [], deadline: "", priority: "Medium", status: "Todo" },
     { id: "ai-2", title: "Confirm on-ground emergency contact", assignees: [], deadline: "", priority: "High",   status: "Todo" },
   ];
+
+  const acceptRecommendations = () => {
+    const targetDivision = divisions[0]?.name ?? "AI suggestions";
+    const baseTs = Date.now();
+    for (let i = 0; i < recommendations.length; i++) {
+      const rec = recommendations[i];
+      storeAddTask({
+        id: `t-${baseTs}-${i}`,
+        title: rec.title,
+        event: event.name,
+        eventColor: getEventColor(event.name),
+        priority: rec.priority,
+        status: STATUS_LOCAL_TO_STORE[rec.status],
+        due: rec.deadline,
+        assignees: [],
+        description: "",
+        division: targetDivision,
+        order: baseTs + i,
+      });
+    }
+    setExtraDivisions((prev) => prev.filter((n) => n !== targetDivision));
+    setAiOpen(false);
+  };
 
   return (
     <div className="space-y-5 text-slate-100">
@@ -471,10 +638,15 @@ export default function EventDetailPage() {
       {/* Hero */}
       <motion.section initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: [0.25, 0.8, 0.3, 1] }}
         className="relative overflow-hidden rounded-3xl border border-white/12 bg-black/50 shadow-[0_24px_70px_rgba(15,17,23,0.95)]">
-        <div className={`relative h-40 w-full overflow-hidden bg-gradient-to-br ${getTypeGradient(event.type)}`}>
-          <motion.div className="absolute inset-0" initial={{ scale: 1 }} animate={{ scale: 1.05 }}
-            transition={{ duration: 20, repeat: Infinity, repeatType: "reverse" }}
-            style={{ backgroundImage: "radial-gradient(circle at 0% 0%, rgba(15,23,42,0.4), transparent 55%), radial-gradient(circle at 100% 100%, rgba(15,23,42,0.7), transparent 55%)" }} />
+        <div className={`relative h-40 w-full overflow-hidden ${event.coverImage ? "bg-black" : `bg-gradient-to-br ${getTypeGradient(event.type)}`}`}>
+          {event.coverImage ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={event.coverImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <motion.div className="absolute inset-0" initial={{ scale: 1 }} animate={{ scale: 1.05 }}
+              transition={{ duration: 20, repeat: Infinity, repeatType: "reverse" }}
+              style={{ backgroundImage: "radial-gradient(circle at 0% 0%, rgba(15,23,42,0.4), transparent 55%), radial-gradient(circle at 100% 100%, rgba(15,23,42,0.7), transparent 55%)" }} />
+          )}
           <div className="absolute inset-0 bg-gradient-to-b from-black/65 via-black/60 to-black/70" />
           <div className="relative flex h-full flex-col justify-end px-5 pb-4 pt-6 sm:px-6 sm:pb-5">
             <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] text-slate-100 ring-1 ring-white/20">
@@ -603,7 +775,7 @@ export default function EventDetailPage() {
                 const isCol    = collapsed.includes(division.id);
 
                 return (
-                  <DndContext key={division.id} sensors={sensors} onDragEnd={e => handleDragEnd(division.id, e)}>
+                  <DndContext key={division.id} sensors={sensors} onDragEnd={e => handleDragEnd(division.name, e)}>
                     <div className="rounded-2xl bg-black/40 p-3 ring-1 ring-white/10">
                       <div className="group flex w-full items-center justify-between gap-2">
                         <button type="button"
@@ -611,9 +783,10 @@ export default function EventDetailPage() {
                           className="flex flex-1 items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
                             <input
-                              value={division.name}
-                              onChange={e => setDivisions(p => p.map(d => d.id !== division.id ? d : { ...d, name: e.target.value }))}
+                              defaultValue={division.name}
                               onClick={e => e.stopPropagation()}
+                              onBlur={e => renameDivision(division.name, e.target.value.trim())}
+                              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                               className={`bg-transparent text-[11px] font-semibold uppercase tracking-[0.18em] outline-none border-none w-32 ${division.color}`}/>
                             <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-slate-200">{done}/{total} done</span>
                           </div>
@@ -638,7 +811,7 @@ export default function EventDetailPage() {
                             <div className="mt-1 text-slate-200/90">This will delete the division and all tasks inside it.</div>
                             <div className="mt-3 flex justify-end gap-2">
                               <button type="button" onClick={() => setCDI(null)} className="rounded-full bg-white/5 px-3 py-1.5 text-slate-100 hover:bg-white/10">Cancel</button>
-                              <button type="button" onClick={() => { setDivisions(p => p.filter(d => d.id !== division.id)); setCDI(null); }}
+                              <button type="button" onClick={() => { deleteDivision(division.name); setCDI(null); }}
                                 className="rounded-full bg-red-500/90 px-3 py-1.5 font-semibold text-white ring-1 ring-red-300/40 hover:brightness-110">Delete</button>
                             </div>
                           </motion.div>
@@ -649,18 +822,18 @@ export default function EventDetailPage() {
                         {!isCol && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }}
                             className="mt-3 space-y-2 overflow-visible">
-                            <SortableContext items={filtered.map(t => `${division.id}:${t.id}`)} strategy={verticalListSortingStrategy}>
+                            <SortableContext items={filtered.map(t => `${division.name}:${t.id}`)} strategy={verticalListSortingStrategy}>
                               <ul className="space-y-2">
                                 <AnimatePresence initial={false}>
                                   {filtered.map(task => {
-                                    const tk = `${division.id}:${task.id}`;
+                                    const tk = `${division.name}:${task.id}`;
                                     return (
-                                      <SortableTask key={task.id} divisionId={division.id} task={task}
-                                        onChange={u => setDivisions(p => p.map(d => d.id !== division.id ? d : { ...d, tasks: d.tasks.map(t => t.id !== task.id ? t : u) }))}
+                                      <SortableTask key={task.id} divisionId={division.name} task={task}
+                                        onChange={u => applyTaskChange(task.id, u)}
                                         onRequestDelete={() => setCTK(tk)}
                                         confirmDeleteOpen={confirmTaskKey === tk}
                                         onCancelDelete={() => setCTK(null)}
-                                        onConfirmDelete={() => { setDivisions(p => p.map(d => d.id !== division.id ? d : { ...d, tasks: d.tasks.filter(t => t.id !== task.id) })); setCTK(null); }}
+                                        onConfirmDelete={() => { storeDeleteTask(task.id); setCTK(null); }}
                                         priorityMenuOpen={priorityMenuKey === tk}
                                         onTogglePriorityMenu={() => setPMK(p => p === tk ? null : tk)}
                                         deadlineStates={deadlineStates}
@@ -673,7 +846,7 @@ export default function EventDetailPage() {
                               </ul>
                             </SortableContext>
                             <button type="button"
-                              onClick={() => setDivisions(p => p.map(d => d.id !== division.id ? d : { ...d, tasks: [...d.tasks, { id: `new-${Date.now()}`, title: "New task", assignees: [], deadline: "", priority: "Medium", status: "Todo" }] }))}
+                              onClick={() => addTaskToDivision(division.name)}
                               className="mt-2 inline-flex items-center gap-1 rounded-full bg-white/5 px-3 py-1.5 text-[11px] text-slate-100 ring-1 ring-white/15 hover:bg-white/10">
                               + Add task
                             </button>
@@ -687,7 +860,7 @@ export default function EventDetailPage() {
             </div>
 
             <button type="button"
-              onClick={() => setDivisions(p => [...p, { id: `div-${Date.now()}`, name: "New division", color: "text-slate-200", tasks: [] }])}
+              onClick={addEmptyDivision}
               className="mt-2 inline-flex items-center gap-1 rounded-full bg-white/5 px-3 py-1.5 text-[11px] text-slate-100 ring-1 ring-white/15 hover:bg-white/10">
               + Add division
             </button>
@@ -716,14 +889,7 @@ export default function EventDetailPage() {
                     <div className="mt-4 flex justify-end gap-2 text-[11px]">
                       <button type="button" onClick={() => setAiOpen(false)} className="rounded-full bg-white/5 px-3 py-1.5 text-slate-100 hover:bg-white/10">Cancel</button>
                       <button type="button"
-                        onClick={() => {
-                          setDivisions(p => {
-                            if (!p.length) return [{ id: "ai-div", name: "AI suggestions", color: "text-indigo-400", tasks: recommendations }];
-                            const [first, ...rest] = p;
-                            return [{ ...first, tasks: [...first.tasks, ...recommendations] }, ...rest];
-                          });
-                          setAiOpen(false);
-                        }}
+                        onClick={acceptRecommendations}
                         className="rounded-full bg-indigo-500 px-4 py-1.5 font-semibold text-white shadow-[0_16px_40px_rgba(79,70,229,0.85)] ring-1 ring-indigo-400/70 hover:bg-indigo-600">
                         Add tasks
                       </button>

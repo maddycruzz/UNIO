@@ -3,106 +3,79 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  loadParticipants as storeLoadParticipants,
-  saveParticipants as storeSaveParticipants,
-  addParticipant as storeAddParticipant,
-  loadEvents as storeLoadEvents,
   type UnioParticipant,
   type UnioEvent,
+  type ParticipantStatus,
 } from '@/lib/store';
 import {
+  loadParticipants as dbLoadParticipants,
+  loadEvents as dbLoadEvents,
+  addParticipant as dbAddParticipant,
+  updateParticipant as dbUpdateParticipant,
+  deleteParticipant as dbDeleteParticipant,
+  checkInParticipant as dbCheckIn,
+} from '@/lib/db';
+import { useAuth } from '@/lib/auth';
+import { PermissionGate } from "@/lib/permissions";
+import {
   Search, Plus, Download, QrCode, CheckCircle2, Clock,
-  Filter, X, ChevronDown, Users, UserCheck, UserX,
+  Filter, X, ChevronDown, Users, UserCheck,
   MoreHorizontal, Mail, Phone, Trash2, Eye, FileText,
   Table, HardDrive, RotateCcw
 } from 'lucide-react';
 import { QRCodeCanvas as QRCode } from 'qrcode.react';
+import Link from 'next/link';
 
-// ── Types ──────────────────────────────────────────────────────────
-type Status = 'checked-in' | 'registered';
-
-interface Participant {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  rollNo: string;
-  dept: string;
-  status: Status;
-  registeredAt: string;
-  checkedInAt?: string;
-}
-
-interface Event {
-  id: string;
-  title: string;
-  date: string;
-  capacity: number;
-}
-
-// ── Mock Data ──────────────────────────────────────────────────────
-const MOCK_EVENTS: Event[] = [
-  { id: 'e1', title: 'Spring Fest Night Market', date: 'Mar 22', capacity: 10 },
-  { id: 'e2', title: 'Founders Pitch Night',      date: 'Mar 25', capacity: 100 },
-  { id: 'e3', title: 'AI & Society Panel',         date: 'Apr 1',  capacity: 200 },
-];
-
-const MOCK_PARTICIPANTS: Participant[] = [
-  { id: 'p1', name: 'Ayaan Nizam',    email: 'ayaan@college.edu',   phone: '9876543210', rollNo: '21CS001', dept: 'CS',   status: 'checked-in', registeredAt: '2 days ago', checkedInAt: 'Today 6:42 PM' },
-  { id: 'p2', name: 'Priya Sharma',   email: 'priya@college.edu',   phone: '9876543211', rollNo: '21CS042', dept: 'CS',   status: 'checked-in', registeredAt: '2 days ago', checkedInAt: 'Today 6:45 PM' },
-  { id: 'p3', name: 'Rohan Mehta',    email: 'rohan@college.edu',   phone: '9876543212', rollNo: '21EC015', dept: 'ECE',  status: 'registered', registeredAt: '1 day ago' },
-  { id: 'p4', name: 'Sneha Iyer',     email: 'sneha@college.edu',   phone: '9876543213', rollNo: '21ME033', dept: 'MECH', status: 'registered', registeredAt: '1 day ago' },
-  { id: 'p5', name: 'Karthik Raja',   email: 'karthik@college.edu', phone: '9876543214', rollNo: '21CS078', dept: 'CS',   status: 'registered', registeredAt: '3 hrs ago' },
-  { id: 'p6', name: 'Divya Krishnan', email: 'divya@college.edu',   phone: '9876543215', rollNo: '21IT022', dept: 'IT',   status: 'checked-in', registeredAt: '3 days ago', checkedInAt: 'Today 7:01 PM' },
-  { id: 'p7', name: 'Arun Balaji',    email: 'arun@college.edu',    phone: '9876543216', rollNo: '21CS090', dept: 'CS',   status: 'registered', registeredAt: '2 days ago' },
-  { id: 'p8', name: 'Meera Nair',     email: 'meera@college.edu',   phone: '9876543217', rollNo: '21EC044', dept: 'ECE',  status: 'registered', registeredAt: '1 hr ago' },
-];
-
+// ── Constants ──────────────────────────────────────────────────────
 const DEPTS = ['All', 'CS', 'ECE', 'IT', 'MECH', 'CIVIL'];
 
-const STATUS_CONFIG: Record<Status, { label: string; color: string; bg: string; icon: React.ElementType }> = {
+const STATUS_CONFIG: Record<ParticipantStatus, { label: string; color: string; bg: string; icon: React.ElementType }> = {
   'checked-in': { label: 'Checked In',  color: '#10B981', bg: 'rgba(16,185,129,0.12)', icon: CheckCircle2 },
   'registered':  { label: 'Registered', color: '#6366F1', bg: 'rgba(99,102,241,0.12)', icon: Clock },
 };
 
 // ── Main Page ──────────────────────────────────────────────────────
 export default function ParticipantsPage() {
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const { user } = useAuth();
+  const [participants, setParticipants] = useState<UnioParticipant[]>([]);
+  const [events, setEvents] = useState<UnioEvent[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<UnioEvent | null>(null);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<ParticipantStatus | 'all'>('all');
   const [deptFilter, setDeptFilter] = useState('All');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
-  const [showQR, setShowQR] = useState<Participant | null>(null);
+  const [selectedParticipant, setSelectedParticipant] = useState<UnioParticipant | null>(null);
+  const [showQR, setShowQR] = useState<UnioParticipant | null>(null);
   const [showEventDropdown, setShowEventDropdown] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   useEffect(() => {
-    // Load events from store
-    const storeEvents = storeLoadEvents();
-    const evList: Event[] = storeEvents.map(e => ({
-      id: e.id,
-      title: e.name,
-      date: e.date,
-      capacity: e.capacity ?? 300,
-    }));
-    setEvents(evList);
-    setSelectedEvent(evList[0] || null);
-
-    // Load participants from store
-    setParticipants(storeLoadParticipants() as unknown as Participant[]);
-
-    const handler = () => setParticipants(storeLoadParticipants() as unknown as Participant[]);
+    const fetchData = async () => {
+      const [evts, parts] = await Promise.all([
+        dbLoadEvents(),
+        dbLoadParticipants(),
+      ]);
+      setEvents(evts);
+      setSelectedEvent(evts[0] || null);
+      setParticipants(parts);
+    };
+    fetchData();
+    const handler = () => fetchData();
     window.addEventListener('unio-store-change', handler);
     return () => window.removeEventListener('unio-store-change', handler);
   }, []);
 
-  const isFull = selectedEvent ? participants.length >= selectedEvent.capacity : false;
+  // Filter participants by selected event, then apply search/status/dept filters
+  const eventParticipants = selectedEvent
+    ? participants.filter(p => p.eventId === selectedEvent.id)
+    : participants;
 
-  const filtered = participants.filter(p => {
+  const isFull = selectedEvent?.capacity != null
+    ? eventParticipants.length >= selectedEvent.capacity
+    : false;
+
+  const filtered = eventParticipants.filter(p => {
     const matchSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.email.toLowerCase().includes(search.toLowerCase()) ||
@@ -113,45 +86,49 @@ export default function ParticipantsPage() {
   });
 
   const stats = {
-    total:      participants.length,
-    checkedIn:  participants.filter(p => p.status === 'checked-in').length,
-    registered: participants.filter(p => p.status === 'registered').length,
-    capacity:   selectedEvent?.capacity ?? 300,
+    total:      eventParticipants.length,
+    checkedIn:  eventParticipants.filter(p => p.status === 'checked-in').length,
+    registered: eventParticipants.filter(p => p.status === 'registered').length,
+    capacity:   selectedEvent?.capacity ?? null,
   };
+  const capacityLabel = stats.capacity ?? '∞';
+  const checkInProgress = stats.capacity != null
+    ? Math.min((stats.checkedIn / stats.capacity) * 100, 100)
+    : (stats.total > 0 ? (stats.checkedIn / stats.total) * 100 : 0);
 
-  const handleCheckIn = (id: string) => {
-    const updated = participants.map(p =>
-      p.id === id ? { ...p, status: 'checked-in' as Status, checkedInAt: 'Just now' } : p
+  const handleCheckIn = async (id: string) => {
+    await dbCheckIn(id);
+    setParticipants((prev) =>
+      prev.map((p) => p.id === id ? { ...p, status: 'checked-in' as const, checkedInAt: 'Just now' } : p)
     );
-    setParticipants(updated);
-    storeSaveParticipants(updated as any);
   };
 
-  const handleRevertToRegistered = (id: string) => {
-    setParticipants(prev => prev.map(p =>
-      p.id === id ? { ...p, status: 'registered', checkedInAt: undefined } : p
-    ));
+  const handleRevertToRegistered = async (id: string) => {
+    await dbUpdateParticipant(id, { status: 'registered', checkedInAt: undefined });
+    setParticipants((prev) =>
+      prev.map((p) => p.id === id ? { ...p, status: 'registered' as const, checkedInAt: undefined } : p)
+    );
     setMenuOpen(null);
   };
 
-  const handleDelete = (id: string) => {
-    const updated = participants.filter(p => p.id !== id);
-    setParticipants(updated);
-    storeSaveParticipants(updated as any);
+  const handleDelete = async (id: string) => {
+    await dbDeleteParticipant(id);
+    setParticipants((prev) => prev.filter((p) => p.id !== id));
     setMenuOpen(null);
   };
 
-  const handleAdd = (data: Omit<Participant, 'id' | 'status' | 'registeredAt'>) => {
-    if (isFull) return;
-    const newP: Participant = {
+  type NewParticipantInput = Omit<UnioParticipant, 'id' | 'status' | 'registeredAt' | 'eventId'>;
+  const handleAdd = async (data: NewParticipantInput) => {
+    if (isFull || !selectedEvent) return;
+    const newP: UnioParticipant = {
       ...data,
       id: `p${Date.now()}`,
       status: 'registered',
       registeredAt: 'Just now',
+      eventId: selectedEvent.id,
     };
-    const updated = [newP, ...participants];
-    setParticipants(updated);
-    storeSaveParticipants(updated as any);
+    await dbAddParticipant(newP);
+    setParticipants((prev) => [newP, ...prev]);
     setShowAddModal(false);
   };
 
@@ -164,7 +141,7 @@ export default function ParticipantsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(selectedEvent?.title || 'participants').replace(/\s+/g, '-')}-participants.csv`;
+    a.download = `${(selectedEvent?.name || 'participants').replace(/\s+/g, '-')}-participants.csv`;
     a.click();
     URL.revokeObjectURL(url);
     setShowExportMenu(false);
@@ -186,7 +163,7 @@ export default function ParticipantsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(selectedEvent?.title || 'participants').replace(/\s+/g, '-')}-participants.xls`;
+    a.download = `${(selectedEvent?.name || 'participants').replace(/\s+/g, '-')}-participants.xls`;
     a.click();
     URL.revokeObjectURL(url);
     setShowExportMenu(false);
@@ -199,7 +176,7 @@ export default function ParticipantsPage() {
     const html = `
       <html>
       <head>
-        <title>${selectedEvent?.title || 'Event'} — Participants</title>
+        <title>${selectedEvent?.name || 'Event'} — Participants</title>
         <style>
           body { font-family: sans-serif; padding: 32px; color: #111; }
           h1 { font-size: 20px; margin-bottom: 4px; }
@@ -213,7 +190,7 @@ export default function ParticipantsPage() {
         </style>
       </head>
       <body>
-        <h1>${selectedEvent?.title || 'Event'}</h1>
+        <h1>${selectedEvent?.name || 'Event'}</h1>
         <p>${selectedEvent?.date || ''} · ${filtered.length} participants</p>
         <table>
           <tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>
@@ -241,7 +218,7 @@ export default function ParticipantsPage() {
             <div style={{ position: 'relative' }}>
               <button onClick={() => setShowEventDropdown(!showEventDropdown)}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                <h1 style={{ fontSize: 'clamp(1.4rem, 3vw, 2rem)', fontWeight: 800, letterSpacing: '-0.03em', color: '#fff', margin: 0 }}>{selectedEvent?.title || 'Participants'}</h1>
+                <h1 style={{ fontSize: 'clamp(1.4rem, 3vw, 2rem)', fontWeight: 800, letterSpacing: '-0.03em', color: '#fff', margin: 0 }}>{selectedEvent?.name || 'Participants'}</h1>
                 <ChevronDown size={20} color="rgba(255,255,255,0.4)" />
               </button>
               <AnimatePresence>
@@ -251,7 +228,7 @@ export default function ParticipantsPage() {
                     {events.map(ev => (
                       <button key={ev.id} onClick={() => { setSelectedEvent(ev); setShowEventDropdown(false); }}
                         style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: ev.id === selectedEvent?.id ? 'rgba(99,102,241,0.12)' : 'none', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 14, textAlign: 'left' }}>
-                        <span>{ev.title}</span>
+                        <span>{ev.name}</span>
                         <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{ev.date}</span>
                       </button>
                     ))}
@@ -264,7 +241,7 @@ export default function ParticipantsPage() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {/* Capacity badge */}
             <div style={{ padding: '8px 14px', borderRadius: 10, backgroundColor: isFull ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)', border: `1px solid ${isFull ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)'}`, fontSize: 12, fontWeight: 700, color: isFull ? '#ef4444' : 'rgba(255,255,255,0.5)' }}>
-              {isFull ? '🔒 Full' : `${stats.total} / ${stats.capacity}`}
+              {isFull ? '🔒 Full' : `${stats.total} / ${capacityLabel}`}
             </div>
 
             {/* Export dropdown */}
@@ -296,12 +273,21 @@ export default function ParticipantsPage() {
               </AnimatePresence>
             </div>
 
-            {/* Add participant — disabled when full */}
-            <button
-              onClick={() => !isFull && setShowAddModal(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 10, backgroundColor: isFull ? 'rgba(255,255,255,0.04)' : '#6366F1', border: isFull ? '1px solid rgba(255,255,255,0.1)' : 'none', color: isFull ? 'rgba(255,255,255,0.3)' : '#fff', fontSize: 13, fontWeight: 700, cursor: isFull ? 'not-allowed' : 'pointer', boxShadow: isFull ? 'none' : '0 4px 16px rgba(99,102,241,0.3)' }}>
-              <Plus size={14} /> {isFull ? 'Event Full' : 'Add Participant'}
-            </button>
+            {/* Scan QR */}
+            <Link href="/dashboard/participants/scan" style={{ textDecoration: 'none' }}>
+              <button
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10B981', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                <QrCode size={14} /> Scan QR
+              </button>
+            </Link>
+
+            <PermissionGate action="participants.create_walkin">
+              <button
+                onClick={() => !isFull && setShowAddModal(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 10, backgroundColor: isFull ? 'rgba(255,255,255,0.04)' : '#6366F1', border: isFull ? '1px solid rgba(255,255,255,0.1)' : 'none', color: isFull ? 'rgba(255,255,255,0.3)' : '#fff', fontSize: 13, fontWeight: 700, cursor: isFull ? 'not-allowed' : 'pointer', boxShadow: isFull ? 'none' : '0 4px 16px rgba(99,102,241,0.3)' }}>
+                <Plus size={14} /> {isFull ? 'Event Full' : 'Add Participant'}
+              </button>
+            </PermissionGate>
           </div>
         </div>
 
@@ -309,14 +295,14 @@ export default function ParticipantsPage() {
         {isFull && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
             style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 12, padding: '12px 18px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#f87171' }}>
-            🔒 This event has reached its maximum capacity of {selectedEvent?.capacity || 300} participants. No more registrations can be added.
+            🔒 This event has reached its maximum capacity of {selectedEvent?.capacity ?? 0} participants. No more registrations can be added.
           </motion.div>
         )}
 
         {/* ── Stats ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 24 }}>
           {[
-            { label: 'Total',      value: `${stats.total}/${stats.capacity}`, color: '#ffffff', icon: Users },
+            { label: 'Total',      value: `${stats.total}/${capacityLabel}`, color: '#ffffff', icon: Users },
             { label: 'Checked In', value: stats.checkedIn,                    color: '#10B981', icon: UserCheck },
             { label: 'Registered', value: stats.registered,                   color: '#6366F1', icon: Clock },
           ].map(s => (
@@ -334,7 +320,7 @@ export default function ParticipantsPage() {
         <div style={{ backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 999, height: 6, marginBottom: 24, overflow: 'hidden' }}>
           <motion.div
             initial={{ width: 0 }}
-            animate={{ width: `${Math.min((stats.checkedIn / stats.capacity) * 100, 100)}%` }}
+            animate={{ width: `${checkInProgress}%` }}
             transition={{ duration: 1, ease: 'easeOut' }}
             style={{ height: '100%', backgroundColor: '#10B981', borderRadius: 999 }}
           />
@@ -351,11 +337,11 @@ export default function ParticipantsPage() {
           {(['all', 'checked-in', 'registered'] as const).map(s => (
             <button key={s} onClick={() => setStatusFilter(s)}
               style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid', transition: 'all 0.2s',
-                backgroundColor: statusFilter === s ? (s === 'all' ? '#6366F1' : STATUS_CONFIG[s as Status]?.color || '#6366F1') : 'rgba(255,255,255,0.04)',
+                backgroundColor: statusFilter === s ? (s === 'all' ? '#6366F1' : STATUS_CONFIG[s as ParticipantStatus]?.color || '#6366F1') : 'rgba(255,255,255,0.04)',
                 borderColor: statusFilter === s ? 'transparent' : 'rgba(255,255,255,0.1)',
                 color: statusFilter === s ? '#fff' : 'rgba(255,255,255,0.5)',
               }}>
-              {s === 'all' ? 'All' : STATUS_CONFIG[s as Status].label}
+              {s === 'all' ? 'All' : STATUS_CONFIG[s as ParticipantStatus].label}
             </button>
           ))}
 
@@ -441,10 +427,12 @@ export default function ParticipantsPage() {
                                   <RotateCcw size={13} /> Revert to Registered
                                 </button>
                               )}
-                              <button onClick={() => handleDelete(p.id)}
-                                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 13 }}>
-                                <Trash2 size={13} /> Remove
-                              </button>
+                              <PermissionGate action="participants.delete">
+                                <button onClick={() => handleDelete(p.id)}
+                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 13 }}>
+                                  <Trash2 size={13} /> Remove
+                                </button>
+                              </PermissionGate>
                             </motion.div>
                           )}
                         </AnimatePresence>
@@ -459,7 +447,7 @@ export default function ParticipantsPage() {
         </div>{/* end overflow wrapper */}
 
         <p style={{ marginTop: 12, fontSize: 12, color: 'rgba(255,255,255,0.25)', textAlign: 'right' }}>
-          Showing {filtered.length} of {participants.length} participants · Capacity {stats.capacity}
+          Showing {filtered.length} of {participants.length} participants · Capacity {capacityLabel}
         </p>
       </div>
 
@@ -490,9 +478,23 @@ export default function ParticipantsPage() {
 }
 
 // ── Add Modal ─────────────────────────────────────────────────────
-function AddModal({ onClose, onAdd }: { onClose: () => void; onAdd: (d: any) => void }) {
+function AddModal({ onClose, onAdd }: { onClose: () => void; onAdd: (d: any) => Promise<void> }) {
   const [form, setForm] = useState({ name: '', email: '', phone: '', rollNo: '', dept: 'CS' });
-  const handleSubmit = () => { if (!form.name || !form.email) return; onAdd(form); };
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleSubmit = async () => { 
+    if (!form.name || !form.email) return; 
+    setIsSubmitting(true);
+    setErrorMsg('');
+    try {
+      await onAdd(form);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to add participant.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -527,9 +529,12 @@ function AddModal({ onClose, onAdd }: { onClose: () => void; onAdd: (d: any) => 
             </select>
           </div>
         </div>
+        {errorMsg && <div style={{ marginTop: 16, fontSize: 13, color: '#EF4444', textAlign: 'center' }}>{errorMsg}</div>}
         <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '11px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-          <button onClick={handleSubmit} style={{ flex: 1, padding: '11px', borderRadius: 10, backgroundColor: '#6366F1', border: 'none', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Add Participant</button>
+          <button onClick={onClose} disabled={isSubmitting} style={{ flex: 1, padding: '11px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={handleSubmit} disabled={isSubmitting} style={{ flex: 1, padding: '11px', borderRadius: 10, backgroundColor: '#6366F1', border: 'none', color: '#fff', fontSize: 14, fontWeight: 700, cursor: isSubmitting ? 'not-allowed' : 'pointer', opacity: isSubmitting ? 0.6 : 1 }}>
+            {isSubmitting ? 'Adding...' : 'Add Participant'}
+          </button>
         </div>
       </motion.div>
     </motion.div>
@@ -538,7 +543,7 @@ function AddModal({ onClose, onAdd }: { onClose: () => void; onAdd: (d: any) => 
 
 // ── Participant Drawer ─────────────────────────────────────────────
 function ParticipantDrawer({ participant: p, onClose, onCheckIn, onRevert, onShowQR }: {
-  participant: Participant; onClose: () => void; onCheckIn: () => void; onRevert: () => void; onShowQR: () => void;
+  participant: UnioParticipant; onClose: () => void; onCheckIn: () => void; onRevert: () => void; onShowQR: () => void;
 }) {
   const cfg = STATUS_CONFIG[p.status];
   const StatusIcon = cfg.icon;
@@ -602,7 +607,7 @@ function ParticipantDrawer({ participant: p, onClose, onCheckIn, onRevert, onSho
 }
 
 // ── QR Modal ──────────────────────────────────────────────────────
-function QRModal({ participant: p, onClose }: { participant: Participant; onClose: () => void }) {
+function QRModal({ participant: p, onClose }: { participant: UnioParticipant; onClose: () => void }) {
   const qrValue = JSON.stringify({ id: p.id, name: p.name, rollNo: p.rollNo, email: p.email });
 
   return (

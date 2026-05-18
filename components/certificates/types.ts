@@ -108,23 +108,6 @@ export const FONT_OPTIONS = [
   { label: 'Monospace', value: "'Courier New', monospace" },
 ];
 
-export const MOCK_EVENTS: EventInfo[] = [
-  { id: 'e1', title: 'Spring Fest Night Market', date: 'Mar 22, 2025', type: 'Cultural' },
-  { id: 'e2', title: 'Founders Pitch Night',     date: 'Mar 25, 2025', type: 'Tech' },
-  { id: 'e3', title: 'AI & Society Panel',        date: 'Apr 1, 2025',  type: 'Conference' },
-];
-
-export const MOCK_PARTICIPANTS: Participant[] = [
-  { id: 'p1', name: 'Ayaan Nizam',    email: 'ayaan@college.edu',   rollNo: '21CS001', dept: 'CS'   },
-  { id: 'p2', name: 'Priya Sharma',   email: 'priya@college.edu',   rollNo: '21CS042', dept: 'CS'   },
-  { id: 'p3', name: 'Rohan Mehta',    email: 'rohan@college.edu',   rollNo: '21EC015', dept: 'ECE'  },
-  { id: 'p4', name: 'Sneha Iyer',     email: 'sneha@college.edu',   rollNo: '21ME033', dept: 'MECH' },
-  { id: 'p5', name: 'Karthik Raja',   email: 'karthik@college.edu', rollNo: '21CS078', dept: 'CS'   },
-  { id: 'p6', name: 'Divya Krishnan', email: 'divya@college.edu',   rollNo: '21IT022', dept: 'IT'   },
-  { id: 'p7', name: 'Arun Balaji',    email: 'arun@college.edu',    rollNo: '21CS090', dept: 'CS'   },
-  { id: 'p8', name: 'Meera Nair',     email: 'meera@college.edu',   rollNo: '21EC044', dept: 'ECE'  },
-];
-
 // ── Default text elements for a new certificate ──
 export function createDefaultTextElements(eventName: string, eventDate: string): TextElement[] {
   return [
