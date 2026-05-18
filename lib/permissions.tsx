@@ -47,7 +47,11 @@ export type PermissionAction =
   | "templates.apply"
   | "templates.delete"
   | "tasks.set_deps"
-  | "meetings.recur";
+  | "meetings.recur"
+  | "approvals.request"
+  | "approvals.review"
+  | "trash.view"
+  | "trash.restore";
 
 /**
  * The SINGLE SOURCE OF TRUTH for UI-level permissions.
@@ -98,6 +102,10 @@ export const PERMISSIONS: Record<PermissionAction, Role[]> = {
   "templates.delete": ["developer", "president"],
   "tasks.set_deps": ["developer", "president", "mate"],
   "meetings.recur": ["developer", "president"],
+  "approvals.request": ["developer", "president", "mate"],
+  "approvals.review": ["developer", "president"],
+  "trash.view": ["developer", "president"],
+  "trash.restore": ["developer", "president"],
 };
 
 /**

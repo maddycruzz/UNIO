@@ -85,6 +85,7 @@ import {
   type RecurrenceType,
   type TaskPriority,
   type TaskDependencyEdge,
+  type UnioApprovalRequest,
 } from "@/lib/store";
 
 function notifyChange() {
@@ -235,6 +236,7 @@ function rowToEvent(row: Record<string, unknown>): UnioEvent {
     isPublic:      (row.is_public as boolean) ?? false,
     registrationOpen: (row.registration_open as boolean) ?? true,
     registrationClosesAt: (row.registration_closes_at as string | undefined) ?? undefined,
+    deletedAt:     (row.deleted_at as string | undefined) ?? undefined,
   };
 }
 
@@ -277,6 +279,7 @@ function rowToTask(row: Record<string, unknown>): UnioTask {
     description: row.description as string,
     division:    row.division as string | undefined,
     order:       row.order as number | undefined,
+    deletedAt:   (row.deleted_at as string | undefined) ?? undefined,
   };
 }
 
@@ -314,6 +317,7 @@ function rowToMeeting(row: Record<string, unknown>): UnioMeeting {
     recurrenceType:     (row.recurrence_type as UnioMeeting["recurrenceType"]) ?? "none",
     recurrenceUntil:    (row.recurrence_until as string | null) ?? undefined,
     recurrenceSeriesId: (row.recurrence_series_id as string | null) ?? undefined,
+    deletedAt:          (row.deleted_at as string | undefined) ?? undefined,
   };
 }
 
@@ -374,12 +378,13 @@ function participantToRow(p: Partial<UnioParticipant>, organizerId?: string): Re
 // ── EVENTS ────────────────────────────────────────────────────────
 
 export async function loadEvents(): Promise<UnioEvent[]> {
-  if (!isSupabaseConfigured()) return storeLoadEvents();
+  if (!isSupabaseConfigured()) return storeLoadEvents().filter((e) => !e.deletedAt);
   const { data, error } = await supabase
     .from("events")
     .select("*")
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (error || !data) return storeLoadEvents();
+  if (error || !data) return storeLoadEvents().filter((e) => !e.deletedAt);
   const events = data.map(rowToEvent);
   // Keep localStorage in sync for offline fallback
   storeSaveEvents(events);
@@ -426,12 +431,13 @@ export async function updateEvent(id: string, updates: Partial<UnioEvent>): Prom
 }
 
 export async function deleteEvent(id: string): Promise<void> {
+  // Soft delete — set deleted_at, keep the row recoverable from Trash.
   if (!isSupabaseConfigured()) {
-    const { deleteEvent: storeDel } = await import("@/lib/store");
-    storeDel(id);
+    const { updateEvent: storeUpdate } = await import("@/lib/store");
+    storeUpdate(id, { deletedAt: new Date().toISOString() });
     return;
   }
-  await supabase.from("events").delete().eq("id", id);
+  await supabase.from("events").update({ deleted_at: new Date().toISOString() }).eq("id", id);
   notifyChange();
 }
 
@@ -447,12 +453,13 @@ export async function getEventById(id: string): Promise<UnioEvent | undefined> {
 // ── TASKS ─────────────────────────────────────────────────────────
 
 export async function loadTasks(): Promise<UnioTask[]> {
-  if (!isSupabaseConfigured()) return storeLoadTasks();
+  if (!isSupabaseConfigured()) return storeLoadTasks().filter((t) => !t.deletedAt);
   const { data, error } = await supabase
     .from("tasks")
     .select("*")
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (error || !data) return storeLoadTasks();
+  if (error || !data) return storeLoadTasks().filter((t) => !t.deletedAt);
   const tasks = data.map(rowToTask);
   storeSaveTasks(tasks);
   return tasks;
@@ -499,12 +506,17 @@ export async function saveTasks(tasks: UnioTask[]): Promise<void> {
 }
 
 export async function deleteTask(id: string): Promise<void> {
+  // Soft delete — set deleted_at, keep the row recoverable from Trash.
   if (!isSupabaseConfigured()) {
-    const { deleteTask: storeDel } = await import("@/lib/store");
-    storeDel(id);
+    const { updateTask: storeUpdate } = await import("@/lib/store");
+    storeUpdate(id, { deletedAt: new Date().toISOString() });
     return;
   }
-  const { error } = await withTimeout(supabase.from("tasks").delete().eq("id", id), 5000, "Database delete timed out");
+  const { error } = await withTimeout(
+    supabase.from("tasks").update({ deleted_at: new Date().toISOString() }).eq("id", id),
+    5000,
+    "Database delete timed out"
+  );
   if (error) throw new Error(error.message);
   notifyChange();
 }
@@ -512,12 +524,13 @@ export async function deleteTask(id: string): Promise<void> {
 // ── MEETINGS ──────────────────────────────────────────────────────
 
 export async function loadMeetings(): Promise<UnioMeeting[]> {
-  if (!isSupabaseConfigured()) return storeLoadMeetings();
+  if (!isSupabaseConfigured()) return storeLoadMeetings().filter((m) => !m.deletedAt);
   const { data, error } = await supabase
     .from("meetings")
     .select("*")
+    .is("deleted_at", null)
     .order("date", { ascending: true });
-  if (error || !data) return storeLoadMeetings();
+  if (error || !data) return storeLoadMeetings().filter((m) => !m.deletedAt);
   const meetings = data.map(rowToMeeting);
   storeSaveMeetings(meetings);
   return meetings;
@@ -552,11 +565,17 @@ export async function updateMeeting(id: string, updates: Partial<UnioMeeting>): 
 }
 
 export async function deleteMeeting(id: string): Promise<void> {
+  // Soft delete — set deleted_at.
   if (!isSupabaseConfigured()) {
-    storeSaveMeetings(storeLoadMeetings().filter(m => m.id !== id));
+    const now = new Date().toISOString();
+    storeSaveMeetings(storeLoadMeetings().map(m => m.id === id ? { ...m, deletedAt: now } : m));
     return;
   }
-  const { error } = await withTimeout(supabase.from("meetings").delete().eq("id", id), 5000, "Database delete timed out");
+  const { error } = await withTimeout(
+    supabase.from("meetings").update({ deleted_at: new Date().toISOString() }).eq("id", id),
+    5000,
+    "Database delete timed out"
+  );
   if (error) throw new Error(error.message);
   notifyChange();
 }
@@ -2291,4 +2310,181 @@ export async function generateEventBrief(eventId: string): Promise<string> {
   lines.push("---");
   lines.push(`_Generated ${new Date().toLocaleString()}_`);
   return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 5 — Approvals, Soft delete (Trash), Audit, QoL
+// ═══════════════════════════════════════════════════════════════════
+
+// ── TRASH (soft-deleted rows) ───────────────────────────────────────
+export type TrashEntry =
+  | { kind: "event";   id: string; title: string; deletedAt: string }
+  | { kind: "task";    id: string; title: string; deletedAt: string }
+  | { kind: "meeting"; id: string; title: string; deletedAt: string };
+
+export async function loadTrash(): Promise<TrashEntry[]> {
+  const all: TrashEntry[] = [];
+  if (!isSupabaseConfigured()) {
+    const { loadEvents: lE, loadTasks: lT, loadMeetings: lM } = await import("@/lib/store");
+    lE().filter((e) => e.deletedAt).forEach((e) => all.push({ kind: "event", id: e.id, title: e.name, deletedAt: e.deletedAt! }));
+    lT().filter((t) => t.deletedAt).forEach((t) => all.push({ kind: "task", id: t.id, title: t.title, deletedAt: t.deletedAt! }));
+    lM().filter((m) => m.deletedAt).forEach((m) => all.push({ kind: "meeting", id: m.id, title: m.title, deletedAt: m.deletedAt! }));
+    return all.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  }
+
+  const [e, t, m] = await Promise.all([
+    supabase.from("events").select("id, name, deleted_at").not("deleted_at", "is", null),
+    supabase.from("tasks").select("id, title, deleted_at").not("deleted_at", "is", null),
+    supabase.from("meetings").select("id, title, deleted_at").not("deleted_at", "is", null),
+  ]);
+  (e.data ?? []).forEach((r) => all.push({ kind: "event", id: r.id as string, title: r.name as string, deletedAt: r.deleted_at as string }));
+  (t.data ?? []).forEach((r) => all.push({ kind: "task", id: r.id as string, title: r.title as string, deletedAt: r.deleted_at as string }));
+  (m.data ?? []).forEach((r) => all.push({ kind: "meeting", id: r.id as string, title: r.title as string, deletedAt: r.deleted_at as string }));
+  return all.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+}
+
+export async function restoreFromTrash(kind: TrashEntry["kind"], id: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    if (kind === "event") {
+      const { loadEvents: lE, saveEvents: sE } = await import("@/lib/store");
+      sE(lE().map((x) => (x.id === id ? { ...x, deletedAt: undefined } : x)));
+    } else if (kind === "task") {
+      const { loadTasks: lT, saveTasks: sT } = await import("@/lib/store");
+      sT(lT().map((x) => (x.id === id ? { ...x, deletedAt: undefined } : x)));
+    } else {
+      const { loadMeetings: lM, saveMeetings: sM } = await import("@/lib/store");
+      sM(lM().map((x) => (x.id === id ? { ...x, deletedAt: undefined } : x)));
+    }
+    notifyChange();
+    return;
+  }
+  const table = kind === "event" ? "events" : kind === "task" ? "tasks" : "meetings";
+  const { error } = await supabase.from(table).update({ deleted_at: null }).eq("id", id);
+  if (error) throw new Error(error.message);
+  notifyChange();
+}
+
+export async function purgeFromTrash(kind: TrashEntry["kind"], id: string): Promise<void> {
+  // Hard delete — irreversible.
+  if (!isSupabaseConfigured()) {
+    if (kind === "event") {
+      const { loadEvents: lE, saveEvents: sE } = await import("@/lib/store");
+      sE(lE().filter((x) => x.id !== id));
+    } else if (kind === "task") {
+      const { loadTasks: lT, saveTasks: sT } = await import("@/lib/store");
+      sT(lT().filter((x) => x.id !== id));
+    } else {
+      const { loadMeetings: lM, saveMeetings: sM } = await import("@/lib/store");
+      sM(lM().filter((x) => x.id !== id));
+    }
+    notifyChange();
+    return;
+  }
+  const table = kind === "event" ? "events" : kind === "task" ? "tasks" : "meetings";
+  const { error } = await supabase.from(table).delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  notifyChange();
+}
+
+// ── APPROVAL REQUESTS ───────────────────────────────────────────────
+function rowToApproval(row: Record<string, unknown>): UnioApprovalRequest {
+  return {
+    id:           row.id as string,
+    clubId:       row.club_id as string,
+    kind:         row.kind as UnioApprovalRequest["kind"],
+    payload:      (row.payload as Record<string, unknown>) ?? {},
+    status:       row.status as UnioApprovalRequest["status"],
+    requesterId:  row.requester_id as string,
+    reviewerId:   (row.reviewer_id as string | undefined) ?? undefined,
+    reviewerNote: (row.reviewer_note as string) ?? "",
+    reviewedAt:   (row.reviewed_at as string | undefined) ?? undefined,
+    createdAt:    row.created_at as string,
+  };
+}
+
+export async function loadApprovals(status?: UnioApprovalRequest["status"]): Promise<UnioApprovalRequest[]> {
+  if (!isSupabaseConfigured()) {
+    const { loadApprovals: ls } = await import("@/lib/store");
+    const all = ls();
+    return status ? all.filter((a) => a.status === status) : all;
+  }
+  const ctx = await getUserContext();
+  if (!ctx) return [];
+
+  let q = supabase.from("approval_requests").select("*").eq("club_id", ctx.activeClubId)
+    .order("created_at", { ascending: false });
+  if (status) q = q.eq("status", status);
+  const { data, error } = await q;
+  if (error || !data) return [];
+
+  // Hydrate requester names via batched profile lookup.
+  const items = data.map(rowToApproval);
+  const ids = Array.from(new Set(items.map((a) => a.requesterId)));
+  if (ids.length > 0) {
+    const { data: profs } = await supabase.from("profiles").select("id, name").in("id", ids);
+    const byId = new Map((profs ?? []).map((p) => [p.id as string, p.name as string]));
+    items.forEach((a) => { a.requesterName = byId.get(a.requesterId); });
+  }
+  return items;
+}
+
+export async function requestApproval(input: {
+  kind: UnioApprovalRequest["kind"];
+  payload: Record<string, unknown>;
+}): Promise<UnioApprovalRequest | { ok: false; error: string }> {
+  const createdAt = new Date().toISOString();
+  if (!isSupabaseConfigured()) {
+    const { addApprovalLocal } = await import("@/lib/store");
+    const local: UnioApprovalRequest = {
+      id: crypto.randomUUID(),
+      clubId: "local",
+      kind: input.kind,
+      payload: input.payload,
+      status: "pending",
+      requesterId: "local",
+      reviewerNote: "",
+      createdAt,
+    };
+    addApprovalLocal(local);
+    return local;
+  }
+  const ctx = await getUserContext();
+  if (!ctx) return { ok: false, error: "not_authenticated" };
+
+  const { data, error } = await supabase.from("approval_requests").insert({
+    club_id:      ctx.activeClubId,
+    kind:         input.kind,
+    payload:      input.payload,
+    requester_id: ctx.userId,
+    status:       "pending",
+  }).select().single();
+  if (error || !data) return { ok: false, error: error?.message ?? "insert_failed" };
+  notifyChange();
+  return rowToApproval(data);
+}
+
+export async function reviewApproval(input: {
+  id: string;
+  decision: "approved" | "rejected";
+  note?: string;
+}): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    const { updateApprovalLocal } = await import("@/lib/store");
+    updateApprovalLocal(input.id, {
+      status: input.decision,
+      reviewerNote: input.note ?? "",
+      reviewedAt: new Date().toISOString(),
+    });
+    return;
+  }
+  const ctx = await getUserContext();
+  if (!ctx) throw new Error("not_authenticated");
+  const { error } = await supabase.from("approval_requests").update({
+    status:        input.decision,
+    reviewer_id:   ctx.userId,
+    reviewer_note: input.note ?? "",
+    reviewed_at:   new Date().toISOString(),
+  }).eq("id", input.id);
+  if (error) throw new Error(error.message);
+  notifyChange();
 }

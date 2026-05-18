@@ -35,6 +35,8 @@ export interface UnioEvent {
   isPublic?: boolean;
   registrationOpen?: boolean;
   registrationClosesAt?: string;
+  /** Phase 5: soft-delete timestamp. */
+  deletedAt?: string;
 }
 
 export type TaskStatus = "todo" | "inprogress" | "done";
@@ -56,6 +58,8 @@ export interface UnioTask {
   order?: number;
   /** Phase 4 — task IDs that must be done before this one can start. */
   dependsOn?: string[];
+  /** Phase 5: soft-delete timestamp. */
+  deletedAt?: string;
 }
 
 // ── Phase 4: Automation ──────────────────────────────────────
@@ -81,6 +85,29 @@ export interface UnioTaskTemplateItem {
   order: number;
 }
 
+// ── Phase 5: Approvals + Soft delete ─────────────────────────
+
+export type ApprovalKind =
+  | "event_create" | "event_update" | "event_delete"
+  | "task_create"  | "task_delete"
+  | "budget_change" | "sponsor_change" | "generic";
+
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface UnioApprovalRequest {
+  id: string;
+  clubId: string;
+  kind: ApprovalKind;
+  payload: Record<string, unknown>;
+  status: ApprovalStatus;
+  requesterId: string;
+  requesterName?: string;
+  reviewerId?: string;
+  reviewerNote: string;
+  reviewedAt?: string;
+  createdAt: string;
+}
+
 export type MeetingStatus = "upcoming" | "ongoing" | "completed";
 
 export type RecurrenceType = "none" | "daily" | "weekly" | "biweekly" | "monthly";
@@ -102,6 +129,8 @@ export interface UnioMeeting {
   recurrenceType?: RecurrenceType;
   recurrenceUntil?: string;
   recurrenceSeriesId?: string;
+  /** Phase 5: soft-delete timestamp. */
+  deletedAt?: string;
 }
 
 export type ParticipantStatus =
@@ -283,6 +312,8 @@ const KEYS = {
   // Phase 4 — automation
   taskTemplates: "unio_task_templates_v1",
   taskDependencies: "unio_task_deps_v1",
+  // Phase 5 — approvals + soft delete
+  approvals: "unio_approvals_v1",
 } as const;
 
 // ── Seed Data ────────────────────────────────────────────────
@@ -867,6 +898,21 @@ export function removeTaskDependencyLocal(edge: TaskDependencyEdge): void {
   saveTaskDependencies(
     loadTaskDependencies().filter((e) => !(e.taskId === edge.taskId && e.dependsOnTaskId === edge.dependsOnTaskId))
   );
+}
+
+// ── Phase 5: approvals (local mirror) ────────────────────────
+export function loadApprovals(): UnioApprovalRequest[] {
+  return load<UnioApprovalRequest[]>(KEYS.approvals, []);
+}
+export function saveApprovals(items: UnioApprovalRequest[]): void {
+  save(KEYS.approvals, items);
+  notify("approvals");
+}
+export function addApprovalLocal(a: UnioApprovalRequest): void {
+  saveApprovals([a, ...loadApprovals()]);
+}
+export function updateApprovalLocal(id: string, updates: Partial<UnioApprovalRequest>): void {
+  saveApprovals(loadApprovals().map((a) => (a.id === id ? { ...a, ...updates } : a)));
 }
 
 // Format relative time for activity items
