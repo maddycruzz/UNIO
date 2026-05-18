@@ -21,7 +21,7 @@ import {
   Search, Plus, Download, QrCode, CheckCircle2, Clock,
   Filter, X, ChevronDown, Users, UserCheck,
   MoreHorizontal, Mail, Phone, Trash2, Eye, FileText,
-  Table, HardDrive, RotateCcw
+  Table, HardDrive, RotateCcw, Hourglass, XCircle, Award
 } from 'lucide-react';
 import { QRCodeCanvas as QRCode } from 'qrcode.react';
 import Link from 'next/link';
@@ -32,6 +32,9 @@ const DEPTS = ['All', 'CS', 'ECE', 'IT', 'MECH', 'CIVIL'];
 const STATUS_CONFIG: Record<ParticipantStatus, { label: string; color: string; bg: string; icon: React.ElementType }> = {
   'checked-in': { label: 'Checked In',  color: '#10B981', bg: 'rgba(16,185,129,0.12)', icon: CheckCircle2 },
   'registered':  { label: 'Registered', color: '#6366F1', bg: 'rgba(99,102,241,0.12)', icon: Clock },
+  'waitlisted':  { label: 'Waitlisted', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)', icon: Hourglass },
+  'attended':    { label: 'Attended',   color: '#14B8A6', bg: 'rgba(20,184,166,0.12)', icon: Award },
+  'cancelled':   { label: 'Cancelled',  color: '#94A3B8', bg: 'rgba(148,163,184,0.12)', icon: XCircle },
 };
 
 // ── Main Page ──────────────────────────────────────────────────────
@@ -89,6 +92,7 @@ export default function ParticipantsPage() {
     total:      eventParticipants.length,
     checkedIn:  eventParticipants.filter(p => p.status === 'checked-in').length,
     registered: eventParticipants.filter(p => p.status === 'registered').length,
+    waitlisted: eventParticipants.filter(p => p.status === 'waitlisted').length,
     capacity:   selectedEvent?.capacity ?? null,
   };
   const capacityLabel = stats.capacity ?? '∞';
@@ -305,6 +309,7 @@ export default function ParticipantsPage() {
             { label: 'Total',      value: `${stats.total}/${capacityLabel}`, color: '#ffffff', icon: Users },
             { label: 'Checked In', value: stats.checkedIn,                    color: '#10B981', icon: UserCheck },
             { label: 'Registered', value: stats.registered,                   color: '#6366F1', icon: Clock },
+            { label: 'Waitlisted', value: stats.waitlisted,                   color: '#F59E0B', icon: Hourglass },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 14, padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -334,7 +339,7 @@ export default function ParticipantsPage() {
               style={{ width: '100%', paddingLeft: 36, paddingRight: 12, paddingTop: 9, paddingBottom: 9, backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
           </div>
 
-          {(['all', 'checked-in', 'registered'] as const).map(s => (
+          {(['all', 'checked-in', 'registered', 'waitlisted'] as const).map(s => (
             <button key={s} onClick={() => setStatusFilter(s)}
               style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid', transition: 'all 0.2s',
                 backgroundColor: statusFilter === s ? (s === 'all' ? '#6366F1' : STATUS_CONFIG[s as ParticipantStatus]?.color || '#6366F1') : 'rgba(255,255,255,0.04)',

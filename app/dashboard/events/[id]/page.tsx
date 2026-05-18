@@ -14,6 +14,7 @@ import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } 
 import { CSS } from "@dnd-kit/utilities";
 import { CommentDrawer } from "@/components/comments/CommentDrawer";
 import { PresenceAvatars } from "@/components/presence/PresenceAvatars";
+import { LifecyclePanel } from "@/components/events/LifecyclePanel";
 import {
   getEventById,
   loadTasks,
@@ -934,6 +935,7 @@ export default function EventDetailPage() {
           </section>
         )}
 
+        <LifecyclePanel eventId={String(eventId)} />
       </motion.div>
       <CommentDrawer parentType="event" parentId={String(eventId)} />
       <PresenceAvatars channelKey={`event:${eventId}`} />
