@@ -97,6 +97,52 @@ export interface ActivityItem {
   timestamp: number;
 }
 
+// ── Phase 1: Communication & Collaboration ───────────────────
+
+export interface UnioAnnouncement {
+  id: string;
+  clubId: string;
+  authorId: string;
+  authorName?: string;
+  authorInitials?: string;
+  title: string;
+  bodyMd: string;
+  pinned: boolean;
+  expiresAt?: string;
+  createdAt: string;
+}
+
+export type CommentParentType = "event" | "task" | "meeting";
+
+export interface UnioComment {
+  id: string;
+  clubId: string;
+  parentType: CommentParentType;
+  parentId: string;
+  authorId: string;
+  authorName?: string;
+  authorInitials?: string;
+  bodyMd: string;
+  mentions: string[];
+  createdAt: string;
+}
+
+export type NotificationType =
+  | "mention"
+  | "assignment"
+  | "due_soon"
+  | "announcement"
+  | "comment_reply";
+
+export interface UnioNotification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  payload: Record<string, unknown>;
+  readAt?: string;
+  createdAt: string;
+}
+
 // ── Keys ─────────────────────────────────────────────────────
 
 const KEYS = {
@@ -107,6 +153,11 @@ const KEYS = {
   profile: "unio_profile_v1",
   activity: "unio_activity_v1",
   seeded: "unio_seeded_v3",
+  // Phase 1 — comms
+  announcements: "unio_announcements_v1",
+  announcementReads: "unio_announcement_reads_v1",
+  comments: "unio_comments_v1",
+  notifications: "unio_notifications_v1",
 } as const;
 
 // ── Seed Data ────────────────────────────────────────────────
@@ -531,6 +582,59 @@ export function getEventColor(eventName: string): string {
 function notify(domain: string): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent("unio-store-change", { detail: { domain } }));
+}
+
+// ── Phase 1: Announcements / Comments / Notifications (local) ─
+
+export function loadAnnouncements(): UnioAnnouncement[] {
+  return load<UnioAnnouncement[]>(KEYS.announcements, []);
+}
+export function saveAnnouncements(items: UnioAnnouncement[]): void {
+  save(KEYS.announcements, items);
+  notify("announcements");
+}
+export function addAnnouncementLocal(a: UnioAnnouncement): void {
+  saveAnnouncements([a, ...loadAnnouncements()]);
+}
+
+export function loadAnnouncementReads(): string[] {
+  return load<string[]>(KEYS.announcementReads, []);
+}
+export function markAnnouncementReadLocal(id: string): void {
+  const reads = loadAnnouncementReads();
+  if (!reads.includes(id)) {
+    save(KEYS.announcementReads, [...reads, id]);
+    notify("announcement_reads");
+  }
+}
+
+export function loadComments(parentType: CommentParentType, parentId: string): UnioComment[] {
+  return load<UnioComment[]>(KEYS.comments, []).filter(
+    (c) => c.parentType === parentType && c.parentId === parentId
+  );
+}
+export function saveAllComments(items: UnioComment[]): void {
+  save(KEYS.comments, items);
+  notify("comments");
+}
+export function addCommentLocal(c: UnioComment): void {
+  saveAllComments([c, ...load<UnioComment[]>(KEYS.comments, [])]);
+}
+
+export function loadNotifications(): UnioNotification[] {
+  return load<UnioNotification[]>(KEYS.notifications, []);
+}
+export function saveNotifications(items: UnioNotification[]): void {
+  save(KEYS.notifications, items);
+  notify("notifications");
+}
+export function markNotificationReadLocal(id: string): void {
+  const items = loadNotifications();
+  saveNotifications(items.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n)));
+}
+export function markAllNotificationsReadLocal(): void {
+  const now = new Date().toISOString();
+  saveNotifications(loadNotifications().map((n) => (n.readAt ? n : { ...n, readAt: now })));
 }
 
 // Format relative time for activity items

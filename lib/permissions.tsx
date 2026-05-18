@@ -25,7 +25,13 @@ export type PermissionAction =
   | "team.invite"
   | "team.remove_member"
   | "settings.club"
-  | "admin.cross_tenant";
+  | "admin.cross_tenant"
+  | "announcements.view"
+  | "announcements.create"
+  | "announcements.delete_own"
+  | "comments.create"
+  | "comments.delete_own"
+  | "notifications.view_own";
 
 /**
  * The SINGLE SOURCE OF TRUTH for UI-level permissions.
@@ -54,6 +60,12 @@ export const PERMISSIONS: Record<PermissionAction, Role[]> = {
   "team.remove_member": ["developer", "president"],
   "settings.club": ["developer", "president"],
   "admin.cross_tenant": ["developer"],
+  "announcements.view": ["developer", "president", "mate"],
+  "announcements.create": ["developer", "president"],
+  "announcements.delete_own": ["developer", "president", "mate"],
+  "comments.create": ["developer", "president", "mate"],
+  "comments.delete_own": ["developer", "president", "mate"],
+  "notifications.view_own": ["developer", "president", "mate"],
 };
 
 /**
