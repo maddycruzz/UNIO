@@ -43,16 +43,23 @@ export default function EventsPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [events, setEvents] = useState<UnioEvent[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]>("All");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchEvents = async () => setEvents(await dbLoadEvents());
+    let cancelled = false;
+    const fetchEvents = async () => {
+      const data = await dbLoadEvents();
+      if (cancelled) return;
+      setEvents(data);
+      setLoading(false);
+    };
     fetchEvents();
     const handler = () => fetchEvents();
     window.addEventListener("unio-store-change", handler);
-    return () => window.removeEventListener("unio-store-change", handler);
+    return () => { cancelled = true; window.removeEventListener("unio-store-change", handler); };
   }, []);
 
   const handleDelete = async (id: string) => {
@@ -108,8 +115,27 @@ export default function EventsPage() {
         </span>
       </div>
 
-      {/* Empty state */}
-      {filteredEvents.length === 0 ? (
+      {/* Loading skeleton */}
+      {loading ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-48 animate-pulse overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-800/60 to-slate-900/60 p-4">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <div className="h-3.5 w-32 rounded bg-white/10" />
+                  <div className="h-4 w-20 rounded-full bg-white/10" />
+                </div>
+                <div className="h-6 w-20 rounded-full bg-white/10" />
+              </div>
+              <div className="mt-6 space-y-2">
+                <div className="h-2.5 w-28 rounded bg-white/10" />
+                <div className="h-2.5 w-40 rounded bg-white/10" />
+                <div className="h-2.5 w-24 rounded bg-white/10" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : filteredEvents.length === 0 ? (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
           className="mt-6 flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-600/50 bg-black/40 px-6 py-16 text-center">
           <div className="relative mb-4 h-20 w-20">
