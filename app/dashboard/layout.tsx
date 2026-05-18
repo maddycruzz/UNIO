@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 const NAV_ITEMS = [
   {
@@ -19,6 +20,10 @@ const NAV_ITEMS = [
   {
     id: "tasks", label: "Tasks", href: "/dashboard/tasks", accent: "#10B981",
     icon: (<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2.5 9L6.5 13L15.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>),
+  },
+  {
+    id: "announcements", label: "Announcements", href: "/dashboard/announcements", accent: "#F472B6",
+    icon: (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 11-5.8-1.6"/></svg>),
   },
   {
     id: "meetings", label: "Meetings", href: "/dashboard/meetings", accent: "#F59E0B",
@@ -285,6 +290,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {children}
           </div>
         </main>
+
+        <NotificationBell />
       </div>
     </>
   );

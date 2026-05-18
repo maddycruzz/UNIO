@@ -29,6 +29,7 @@ import {
   getUpcomingEvents,
 } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
+import { AnnouncementBanner } from "@/components/announcements/AnnouncementBanner";
 import {
   DndContext,
   closestCenter,
@@ -813,6 +814,7 @@ export default function DashboardHome() {
       </div>
 
       <div className="space-y-6">
+        <AnnouncementBanner />
         <div className="mb-3 flex items-center justify-between">
           <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
             Dashboard overview
