@@ -93,6 +93,10 @@ CREATE POLICY "invitations_delete" ON public.club_invitations FOR DELETE
 -- Validates the token, inserts into club_members, marks invitation accepted.
 -- SECURITY DEFINER so it can bypass RLS for the cross-table writes,
 -- but the caller is still authenticated via auth.uid().
+-- Drop first in case an older version exists with a different return type
+-- (Postgres won't let CREATE OR REPLACE change the return type).
+DROP FUNCTION IF EXISTS public.accept_invitation(TEXT);
+
 CREATE OR REPLACE FUNCTION public.accept_invitation(invite_token TEXT)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE

@@ -133,6 +133,8 @@ CREATE POLICY "notif_delete" ON public.notifications FOR DELETE
 -- Guards: caller must have club access, and the mentions array must
 -- be a subset of the calling club's members.
 -- ══════════════════════════════════════════════════════════════════
+DROP FUNCTION IF EXISTS public.fanout_mentions(UUID, UUID, UUID[], TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION public.fanout_mentions(
   p_club_id     UUID,
   p_comment_id  UUID,
@@ -178,6 +180,8 @@ GRANT EXECUTE ON FUNCTION public.fanout_mentions(UUID, UUID, UUID[], TEXT, TEXT)
 -- when a new announcement is posted. Called from the client after
 -- the announcement insert succeeds.
 -- ══════════════════════════════════════════════════════════════════
+DROP FUNCTION IF EXISTS public.fanout_announcement(UUID, UUID, TEXT);
+
 CREATE OR REPLACE FUNCTION public.fanout_announcement(
   p_club_id        UUID,
   p_announcement_id UUID,
