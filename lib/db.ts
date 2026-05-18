@@ -780,21 +780,30 @@ export async function inviteTeamMember(email: string): Promise<{ success: boolea
   if (!isSupabaseConfigured()) {
     throw new Error("Supabase is not configured.");
   }
-  const ctx = await getUserContext();
+  const ctx = await withTimeout(
+    getUserContext(),
+    5000,
+    "Sign-in expired — please refresh the page."
+  );
   if (!ctx || (ctx.role !== "president" && ctx.role !== "developer")) {
-    throw new Error("Forbidden: You do not have permission to invite team members.");
+    throw new Error("You do not have permission to invite team members.");
   }
 
   const token = crypto.randomUUID();
-  const { error } = await supabase.from("club_invitations").insert({
+  const insertPromise = supabase.from("club_invitations").insert({
     club_id: ctx.activeClubId,
     email,
     token,
     role: "mate",
+    invited_by: ctx.userId,
     expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   });
+  const { error } = await withTimeout(insertPromise, 10000, "Invite timed out — check your connection.");
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    console.error("inviteTeamMember insert error:", error);
+    throw new Error(error.message);
+  }
   return { success: true, token };
 }
 
@@ -883,10 +892,11 @@ export async function addAnnouncement(
     return local;
   }
 
-  const ctx = await withTimeout(getUserContext(), 5000, "getUserContext timed out");
-  if (!ctx) throw new Error("Failed to get user context");
+  const ctx = await withTimeout(getUserContext(), 5000, "Sign-in expired — please refresh the page.");
+  if (!ctx) throw new Error("You appear to be signed out. Refresh and try again.");
 
-  const { data, error } = await supabase
+  // Hard-cap the insert so a stalled connection never spins forever.
+  const insertPromise = supabase
     .from("announcements")
     .insert({
       club_id:    ctx.activeClubId,
@@ -898,14 +908,22 @@ export async function addAnnouncement(
     })
     .select()
     .single();
-  if (error || !data) throw new Error(error?.message || "Failed to create announcement");
+  const { data, error } = await withTimeout(insertPromise, 10000, "Announcement timed out — check your connection.");
+  if (error || !data) {
+    console.error("addAnnouncement insert error:", error);
+    throw new Error(error?.message || "Failed to create announcement");
+  }
 
-  // Fan out notifications to every other club member.
-  await supabase.rpc("fanout_announcement", {
-    p_club_id: ctx.activeClubId,
-    p_announcement_id: data.id,
-    p_title: input.title,
-  }).then(undefined, (e) => console.warn("fanout_announcement failed:", e));
+  // Fan out is best-effort and time-capped — never blocks the user's success path.
+  withTimeout(
+    supabase.rpc("fanout_announcement", {
+      p_club_id: ctx.activeClubId,
+      p_announcement_id: data.id,
+      p_title: input.title,
+    }),
+    5000,
+    "fanout timed out"
+  ).then(undefined, (e) => console.warn("fanout_announcement failed:", e));
 
   notifyChange();
   return rowToAnnouncement(data);
