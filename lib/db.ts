@@ -19,6 +19,7 @@ import {
   loadParticipants as storeLoadParticipants,
   saveParticipants as storeSaveParticipants,
   loadActivity as storeLoadActivity,
+  saveActivity as storeSaveActivity,
   addActivity as storeAddActivity,
   getDashboardStats as storeGetDashboardStats,
   getUpcomingEvents as storeGetUpcomingEvents,
@@ -91,13 +92,14 @@ function readJwtUserIdFromStorage(): string | null {
 export async function getUserContext(): Promise<UserContext | null> {
   if (!isSupabaseConfigured()) return null;
 
-  // Step 1: race getSession() against a 1.5s timeout. On the happy path this
+  // Step 1: race getSession() against a 3s timeout. On the happy path this
   // returns instantly from in-memory state; on a hung token-refresh it bails out.
+  // 1.5s was too tight — cold-start tabs legitimately exceed it.
   let userId: string | null = null;
   try {
     const sessionPromise = supabase.auth.getSession();
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("getSession soft-timeout")), 1500)
+      setTimeout(() => reject(new Error("getSession soft-timeout")), 3000)
     );
     const { data } = (await Promise.race([sessionPromise, timeoutPromise])) as Awaited<ReturnType<typeof supabase.auth.getSession>>;
     userId = data?.session?.user?.id ?? null;
@@ -112,7 +114,8 @@ export async function getUserContext(): Promise<UserContext | null> {
 
   if (!userId) return null;
   if (!UUID_RE.test(userId)) {
-    console.error("getUserContext: user id is not a real UUID, refusing to proceed:", userId);
+    // Demo/local IDs like "u-ayaan" reach here in offline mode — that's expected,
+    // not an error; just refuse to use them for organizer_id writes.
     return null;
   }
 
@@ -380,7 +383,9 @@ export async function loadTasks(): Promise<UnioTask[]> {
     .select("*")
     .order("created_at", { ascending: false });
   if (error || !data) return storeLoadTasks();
-  return data.map(rowToTask);
+  const tasks = data.map(rowToTask);
+  storeSaveTasks(tasks);
+  return tasks;
 }
 
 export async function addTask(task: UnioTask): Promise<void> {
@@ -443,7 +448,9 @@ export async function loadMeetings(): Promise<UnioMeeting[]> {
     .select("*")
     .order("date", { ascending: true });
   if (error || !data) return storeLoadMeetings();
-  return data.map(rowToMeeting);
+  const meetings = data.map(rowToMeeting);
+  storeSaveMeetings(meetings);
+  return meetings;
 }
 
 export async function addMeeting(meeting: UnioMeeting): Promise<void> {
@@ -505,7 +512,9 @@ export async function loadParticipants(): Promise<UnioParticipant[]> {
     .select("*")
     .order("created_at", { ascending: false });
   if (error || !data) return storeLoadParticipants();
-  return data.map(rowToParticipant);
+  const participants = data.map(rowToParticipant);
+  storeSaveParticipants(participants);
+  return participants;
 }
 
 export async function getParticipantsForEvent(eventId: string): Promise<UnioParticipant[]> {
@@ -588,12 +597,14 @@ export async function loadActivity(): Promise<ActivityItem[]> {
     .order("created_at", { ascending: false })
     .limit(20);
   if (error || !data) return storeLoadActivity();
-  return data.map(row => ({
+  const items: ActivityItem[] = data.map(row => ({
     id:        row.id as string,
     title:     row.title as string,
     meta:      row.meta as string,
     timestamp: new Date(row.created_at as string).getTime(),
   }));
+  storeSaveActivity(items);
+  return items;
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────
@@ -640,14 +651,14 @@ export async function loadTeamMembers(): Promise<TeamMember[]> {
   const ctx = await getUserContext();
   if (!ctx) return [];
 
-  // Get the president
+  // President profile (single row keyed by auth.uid()).
   const { data: presidentData } = await supabase
     .from("profiles")
-    .select("id, name, initials, role")
+    .select("id, name, initials, role, email")
     .eq("id", ctx.activeClubId)
     .single();
 
-  // Get all mates
+  // Mate club_members rows.
   const { data: matesData } = await supabase
     .from("club_members")
     .select("user_id, role")
@@ -655,32 +666,28 @@ export async function loadTeamMembers(): Promise<TeamMember[]> {
 
   const team: TeamMember[] = [];
   if (presidentData) {
-    const { data: authUser } = await supabase.auth.admin?.getUserById(presidentData.id) || { data: null };
     team.push({
       id: presidentData.id,
       name: presidentData.name,
-      email: authUser?.user?.email || "president@club.com",
+      email: presidentData.email || "",
       role: presidentData.role as UserRole,
       initials: presidentData.initials,
     });
   }
 
-  // To fetch emails of mates properly requires admin API or a secure edge function,
-  // but for Phase 2 prototype, we'll fetch their profiles and use placeholder emails
-  // if admin API isn't exposed to the client.
   if (matesData && matesData.length > 0) {
     const mateIds = matesData.map((m) => m.user_id);
     const { data: mateProfiles } = await supabase
       .from("profiles")
-      .select("id, name, initials")
+      .select("id, name, initials, email")
       .in("id", mateIds);
-    
+
     if (mateProfiles) {
       mateProfiles.forEach((p) => {
         team.push({
           id: p.id,
           name: p.name,
-          email: "mate@club.com", // Placeholder
+          email: p.email || "",
           role: "mate",
           initials: p.initials,
         });
