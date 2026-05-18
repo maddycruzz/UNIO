@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS public.club_invitations (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Add columns to pre-existing club_invitations tables (CREATE TABLE IF NOT
+-- EXISTS above is a no-op if the table already lives in the schema).
+ALTER TABLE public.club_invitations ADD COLUMN IF NOT EXISTS invited_by  UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE public.club_invitations ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+ALTER TABLE public.club_invitations ADD COLUMN IF NOT EXISTS accepted_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE public.club_invitations ADD COLUMN IF NOT EXISTS expires_at  TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '7 days';
+ALTER TABLE public.club_invitations ADD COLUMN IF NOT EXISTS role        user_role NOT NULL DEFAULT 'mate';
+
+-- Tell PostgREST to drop its cached schema so the new columns are visible
+-- to API requests immediately, without waiting for a project restart.
+NOTIFY pgrst, 'reload schema';
+
 CREATE INDEX IF NOT EXISTS club_invitations_token_idx ON public.club_invitations(token);
 CREATE INDEX IF NOT EXISTS club_invitations_club_id_idx ON public.club_invitations(club_id);
 

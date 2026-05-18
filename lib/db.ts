@@ -735,6 +735,8 @@ export async function loadTeamMembers(): Promise<TeamMember[]> {
     .eq("club_id", ctx.activeClubId);
 
   const team: TeamMember[] = [];
+  const seen = new Set<string>();
+
   if (presidentData) {
     team.push({
       id: presidentData.id,
@@ -743,25 +745,34 @@ export async function loadTeamMembers(): Promise<TeamMember[]> {
       role: presidentData.role as UserRole,
       initials: presidentData.initials,
     });
+    seen.add(presidentData.id);
   }
 
   if (matesData && matesData.length > 0) {
-    const mateIds = matesData.map((m) => m.user_id);
-    const { data: mateProfiles } = await supabase
-      .from("profiles")
-      .select("id, name, initials, email")
-      .in("id", mateIds);
+    // Exclude the president — they live in profiles, not as a "mate" of themselves.
+    const mateIds = matesData
+      .map((m) => m.user_id)
+      .filter((id) => !seen.has(id));
 
-    if (mateProfiles) {
-      mateProfiles.forEach((p) => {
-        team.push({
-          id: p.id,
-          name: p.name,
-          email: p.email || "",
-          role: "mate",
-          initials: p.initials,
+    if (mateIds.length > 0) {
+      const { data: mateProfiles } = await supabase
+        .from("profiles")
+        .select("id, name, initials, email")
+        .in("id", mateIds);
+
+      if (mateProfiles) {
+        mateProfiles.forEach((p) => {
+          if (seen.has(p.id)) return; // belt-and-suspenders dedupe
+          seen.add(p.id);
+          team.push({
+            id: p.id,
+            name: p.name,
+            email: p.email || "",
+            role: "mate",
+            initials: p.initials,
+          });
         });
-      });
+      }
     }
   }
 
@@ -790,12 +801,16 @@ export async function inviteTeamMember(email: string): Promise<{ success: boolea
   }
 
   const token = crypto.randomUUID();
+  // We don't send invited_by because some older copies of club_invitations
+  // pre-date that column — the v5 migration added it via CREATE TABLE IF
+  // NOT EXISTS, which is a no-op when the table already existed.
+  // The supabase_rbac_migration_v5_fix.sql migration backfills it; until
+  // it's run, the field stays optional client-side.
   const insertPromise = supabase.from("club_invitations").insert({
     club_id: ctx.activeClubId,
     email,
     token,
     role: "mate",
-    invited_by: ctx.userId,
     expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   });
   const { error } = await withTimeout(insertPromise, 10000, "Invite timed out — check your connection.");
