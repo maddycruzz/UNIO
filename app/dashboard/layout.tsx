@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { CommandPalette } from "@/components/command/CommandPalette";
 
 const NAV_ITEMS = [
   {
@@ -47,6 +48,8 @@ const NAV_ITEMS = [
 ];
 
 const BOTTOM_ITEMS = [
+  { id: "approvals", label: "Approvals", href: "/dashboard/approvals", roles: ["president", "developer"], icon: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>) },
+  { id: "trash", label: "Trash", href: "/dashboard/trash", roles: ["president", "developer"], icon: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>) },
   { id: "settings", label: "Settings", href: "/dashboard/settings", icon: (<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.4"/><path d="M8 1.5V3M8 13V14.5M14.5 8H13M3 8H1.5M12.7 3.3L11.6 4.4M4.4 11.6L3.3 12.7M12.7 12.7L11.6 11.6M4.4 4.4L3.3 3.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>) },
   { id: "help", label: "Help", href: "/dashboard/help", icon: (<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.4"/><path d="M6 6.2C6 5.09543 6.89543 4.2 8 4.2C9.10457 4.2 10 5.09543 10 6.2C10 7.30457 9.10457 8.2 8 8.2V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><circle cx="8" cy="11.5" r="0.75" fill="currentColor"/></svg>) },
   { id: "admin", label: "Platform Admin", href: "/admin", roles: ["developer"], icon: (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>) },
@@ -302,6 +305,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </main>
 
         <NotificationBell />
+        <CommandPalette />
       </div>
     </>
   );

@@ -17,6 +17,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "UNIO",
   description: "Event management, reimagined for campus.",
+  manifest: "/manifest.json",
+  themeColor: "#0F1117",
+  appleWebApp: {
+    capable: true,
+    title: "UNIO",
+    statusBarStyle: "black-translucent",
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#0F1117",
 };
 
 export default function RootLayout({
