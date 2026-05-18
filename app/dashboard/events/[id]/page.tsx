@@ -18,6 +18,9 @@ import { LifecyclePanel } from "@/components/events/LifecyclePanel";
 import { BudgetPanel } from "@/components/events/BudgetPanel";
 import { SponsorsPanel } from "@/components/events/SponsorsPanel";
 import { FilesPanel } from "@/components/events/FilesPanel";
+import { TemplatesPanel } from "@/components/events/TemplatesPanel";
+import { DependenciesPanel } from "@/components/events/DependenciesPanel";
+import { BriefPanel } from "@/components/events/BriefPanel";
 import {
   getEventById,
   loadTasks,
@@ -944,6 +947,9 @@ export default function EventDetailPage() {
           <BudgetPanel eventId={String(eventId)} />
           <SponsorsPanel eventId={String(eventId)} />
           <FilesPanel eventId={String(eventId)} />
+          <TemplatesPanel eventId={String(eventId)} />
+          <DependenciesPanel eventId={String(eventId)} />
+          <BriefPanel eventId={String(eventId)} />
         </section>
       </motion.div>
       <CommentDrawer parentType="event" parentId={String(eventId)} />

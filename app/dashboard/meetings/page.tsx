@@ -5,12 +5,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   getEventColor,
   type UnioMeeting,
+  type RecurrenceType,
   type MeetingStatus,
   type UnioEvent,
 } from "@/lib/store";
 import {
   loadMeetings as dbLoadMeetings,
   addMeeting as dbAddMeeting,
+  addRecurringMeetings as dbAddRecurringMeetings,
   saveMeetings as dbSaveMeetings,
   deleteMeeting as dbDeleteMeeting,
   loadEvents as dbLoadEvents,
@@ -190,9 +192,12 @@ function MeetingModal({ meeting, onClose, onSaveNotes, onDelete }: { meeting: Me
 
 function ScheduleModal({ onClose, onAdd, events }: { onClose: () => void; onAdd: (m: Meeting) => Promise<void>; events: UnioEvent[] }) {
   const [form, setForm] = useState({ title: "", event: "", date: "", time: "", duration: "60", location: "", agenda: "", meetingLink: "" });
+  const [recurrence, setRecurrence] = useState<RecurrenceType>("none");
+  const [recurrenceUntil, setRecurrenceUntil] = useState("");
   const [step, setStep] = useState<"form" | "success">("form");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [createdCount, setCreatedCount] = useState(1);
 
   const EVENTS = events.map(e => e.name);
 
@@ -213,16 +218,28 @@ function ScheduleModal({ onClose, onAdd, events }: { onClose: () => void; onAdd:
       status: "upcoming",
       attendees: [{ i: "AK", c: "#6366F1" }],
       agenda: form.agenda, notes: "",
+      recurrenceType: recurrence,
+      recurrenceUntil: recurrence !== "none" ? recurrenceUntil : undefined,
     };
-    
+
     setIsSubmitting(true);
     setErrorMsg("");
-    
+
     try {
-      await onAdd(newMeeting);
+      if (recurrence !== "none" && recurrenceUntil) {
+        const series = await dbAddRecurringMeetings({
+          seed: newMeeting,
+          recurrenceType: recurrence,
+          until: recurrenceUntil,
+        });
+        setCreatedCount(series.length);
+      } else {
+        await onAdd(newMeeting);
+        setCreatedCount(1);
+      }
       setStep("success");
-    } catch (err: any) {
-      setErrorMsg(err.message || "Failed to schedule meeting.");
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to schedule meeting.");
     } finally {
       setIsSubmitting(false);
     }
@@ -300,6 +317,22 @@ function ScheduleModal({ onClose, onAdd, events }: { onClose: () => void; onAdd:
                 <textarea value={form.agenda} onChange={e => setForm(p => ({ ...p, agenda: e.target.value }))} placeholder="1. Topic one&#10;2. Topic two" rows={3}
                   style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} />
               </div>
+              <div>
+                <label style={labelStyle}>Repeat</label>
+                <div style={{ display: "grid", gridTemplateColumns: recurrence === "none" ? "1fr" : "1fr 1fr", gap: 12 }}>
+                  <select value={recurrence} onChange={e => setRecurrence(e.target.value as RecurrenceType)} style={{ ...inputStyle, cursor: "pointer" }}>
+                    <option value="none" style={{ background: "#13151F" }}>Doesn't repeat</option>
+                    <option value="daily" style={{ background: "#13151F" }}>Daily</option>
+                    <option value="weekly" style={{ background: "#13151F" }}>Weekly</option>
+                    <option value="biweekly" style={{ background: "#13151F" }}>Every 2 weeks</option>
+                    <option value="monthly" style={{ background: "#13151F" }}>Monthly</option>
+                  </select>
+                  {recurrence !== "none" && (
+                    <input type="date" value={recurrenceUntil} onChange={e => setRecurrenceUntil(e.target.value)}
+                      style={{ ...inputStyle, colorScheme: "dark" }} placeholder="Until" min={form.date || undefined} />
+                  )}
+                </div>
+              </div>
               <motion.button whileHover={!isSubmitting && EVENTS.length > 0 ? { scale: 1.02 } : {}} whileTap={!isSubmitting && EVENTS.length > 0 ? { scale: 0.98 } : {}} onClick={handleSubmit} disabled={isSubmitting || EVENTS.length === 0}
                 style={{ padding: "11px 0", borderRadius: 12, border: "none", background: EVENTS.length > 0 ? "linear-gradient(135deg,#6366F1,#818CF8)" : "rgba(255,255,255,0.05)", borderStyle: EVENTS.length > 0 ? "none" : "solid", borderColor: "rgba(255,255,255,0.1)", borderWidth: EVENTS.length > 0 ? 0 : 1, color: EVENTS.length > 0 ? "white" : "rgba(255,255,255,0.25)", fontSize: 14, fontWeight: 700, cursor: isSubmitting || EVENTS.length === 0 ? "not-allowed" : "pointer", boxShadow: EVENTS.length > 0 ? "0 4px 16px rgba(99,102,241,0.35)" : "none", marginTop: 4, opacity: isSubmitting ? 0.6 : 1 }}>
                 {isSubmitting ? "Scheduling..." : EVENTS.length === 0 ? "Create an Event First" : "Schedule Meeting"}
@@ -313,8 +346,8 @@ function ScheduleModal({ onClose, onAdd, events }: { onClose: () => void; onAdd:
               style={{ width: 64, height: 64, borderRadius: "50%", background: "linear-gradient(135deg,#10B981,#34D399)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", boxShadow: "0 0 30px rgba(16,185,129,0.4)" }}>
               <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 14L11 19L22 8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </motion.div>
-            <h3 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 800, color: "white" }}>Meeting Scheduled!</h3>
-            <p style={{ margin: "0 0 24px", fontSize: 13, color: "rgba(255,255,255,0.4)" }}>It's been added to your calendar.</p>
+            <h3 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 800, color: "white" }}>{createdCount > 1 ? `${createdCount} Meetings Scheduled!` : "Meeting Scheduled!"}</h3>
+            <p style={{ margin: "0 0 24px", fontSize: 13, color: "rgba(255,255,255,0.4)" }}>{createdCount > 1 ? `Recurring series added to your calendar.` : `It's been added to your calendar.`}</p>
             <button onClick={onClose} style={{ padding: "9px 28px", borderRadius: 10, border: "none", background: "rgba(255,255,255,0.08)", color: "white", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Close</button>
           </div>
         )}

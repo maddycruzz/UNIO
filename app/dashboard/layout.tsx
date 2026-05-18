@@ -68,6 +68,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Seed store on first visit
   useEffect(() => { ensureSeeded(); }, []);
 
+  // Phase 4: kick off due-soon reminders once per session.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    import("@/lib/db").then(({ checkDueReminders }) => {
+      if (!cancelled) checkDueReminders().catch(() => {});
+    });
+    return () => { cancelled = true; };
+  }, [user]);
+
   const profileData = useMemo(() => ({
     name: user?.name ?? "...",
     initials: user?.initials ?? "??",
