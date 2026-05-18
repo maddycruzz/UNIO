@@ -198,7 +198,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Bottom */}
       <div style={{ padding: mini ? "4px 0 16px" : "4px 10px 16px", flexShrink: 0 }}>
-        {BOTTOM_ITEMS.map(item => (
+        {BOTTOM_ITEMS.filter(item => !item.roles || (user?.role && item.roles.includes(user.role))).map(item => (
           <Link key={item.id} href={item.href} style={{ textDecoration: "none", display: "block" }}>
             <div onMouseEnter={() => setHoveredItem(item.id)} onMouseLeave={() => setHoveredItem(null)} style={{ display: "flex", alignItems: "center", gap: 10, padding: mini ? "8px 0" : "8px 12px", justifyContent: mini ? "center" : "flex-start", borderRadius: 8, cursor: "pointer", color: hoveredItem === item.id ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.25)", transition: "color 0.2s", marginBottom: 2 }}>
               {item.icon}
