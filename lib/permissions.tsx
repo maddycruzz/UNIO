@@ -41,7 +41,13 @@ export type PermissionAction =
   | "sponsors.view"
   | "sponsors.edit"
   | "files.upload"
-  | "files.delete";
+  | "files.delete"
+  | "templates.view"
+  | "templates.create"
+  | "templates.apply"
+  | "templates.delete"
+  | "tasks.set_deps"
+  | "meetings.recur";
 
 /**
  * The SINGLE SOURCE OF TRUTH for UI-level permissions.
@@ -86,6 +92,12 @@ export const PERMISSIONS: Record<PermissionAction, Role[]> = {
   "sponsors.edit": ["developer", "president"],
   "files.upload": ["developer", "president", "mate"],
   "files.delete": ["developer", "president"],
+  "templates.view": ["developer", "president", "mate"],
+  "templates.create": ["developer", "president"],
+  "templates.apply": ["developer", "president"],
+  "templates.delete": ["developer", "president"],
+  "tasks.set_deps": ["developer", "president", "mate"],
+  "meetings.recur": ["developer", "president"],
 };
 
 /**

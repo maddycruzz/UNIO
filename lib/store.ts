@@ -54,9 +54,36 @@ export interface UnioTask {
   division?: string;
   /** Sort order within a division on event detail page. Lower = earlier. */
   order?: number;
+  /** Phase 4 — task IDs that must be done before this one can start. */
+  dependsOn?: string[];
+}
+
+// ── Phase 4: Automation ──────────────────────────────────────
+
+export interface UnioTaskTemplate {
+  id: string;
+  name: string;
+  description: string;
+  eventType: EventType;
+  isShared: boolean;
+  createdAt: string;
+  items: UnioTaskTemplateItem[];
+}
+
+export interface UnioTaskTemplateItem {
+  id: string;
+  templateId: string;
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  division: string;
+  daysOffset: number;
+  order: number;
 }
 
 export type MeetingStatus = "upcoming" | "ongoing" | "completed";
+
+export type RecurrenceType = "none" | "daily" | "weekly" | "biweekly" | "monthly";
 
 export interface UnioMeeting {
   id: string;
@@ -71,6 +98,10 @@ export interface UnioMeeting {
   attendees: { i: string; c: string }[];
   agenda: string;
   notes: string;
+  /** Phase 4 — recurrence. */
+  recurrenceType?: RecurrenceType;
+  recurrenceUntil?: string;
+  recurrenceSeriesId?: string;
 }
 
 export type ParticipantStatus =
@@ -249,6 +280,9 @@ const KEYS = {
   budgets: "unio_budgets_v1",
   sponsors: "unio_sponsors_v1",
   eventFiles: "unio_event_files_v1",
+  // Phase 4 — automation
+  taskTemplates: "unio_task_templates_v1",
+  taskDependencies: "unio_task_deps_v1",
 } as const;
 
 // ── Seed Data ────────────────────────────────────────────────
@@ -797,6 +831,42 @@ export function addEventFileLocal(f: UnioEventFile): void {
 }
 export function deleteEventFileLocal(id: string): void {
   saveEventFiles(load<UnioEventFile[]>(KEYS.eventFiles, []).filter((f) => f.id !== id));
+}
+
+// ── Phase 4: templates + deps (local mirror) ─────────────────
+export function loadTaskTemplates(): UnioTaskTemplate[] {
+  return load<UnioTaskTemplate[]>(KEYS.taskTemplates, []);
+}
+export function saveTaskTemplates(items: UnioTaskTemplate[]): void {
+  save(KEYS.taskTemplates, items);
+  notify("task_templates");
+}
+export function addTaskTemplateLocal(t: UnioTaskTemplate): void {
+  saveTaskTemplates([t, ...loadTaskTemplates()]);
+}
+export function deleteTaskTemplateLocal(id: string): void {
+  saveTaskTemplates(loadTaskTemplates().filter((t) => t.id !== id));
+}
+
+export interface TaskDependencyEdge { taskId: string; dependsOnTaskId: string }
+
+export function loadTaskDependencies(): TaskDependencyEdge[] {
+  return load<TaskDependencyEdge[]>(KEYS.taskDependencies, []);
+}
+export function saveTaskDependencies(items: TaskDependencyEdge[]): void {
+  save(KEYS.taskDependencies, items);
+  notify("task_deps");
+}
+export function addTaskDependencyLocal(edge: TaskDependencyEdge): void {
+  const all = loadTaskDependencies();
+  if (!all.some((e) => e.taskId === edge.taskId && e.dependsOnTaskId === edge.dependsOnTaskId)) {
+    saveTaskDependencies([edge, ...all]);
+  }
+}
+export function removeTaskDependencyLocal(edge: TaskDependencyEdge): void {
+  saveTaskDependencies(
+    loadTaskDependencies().filter((e) => !(e.taskId === edge.taskId && e.dependsOnTaskId === edge.dependsOnTaskId))
+  );
 }
 
 // Format relative time for activity items

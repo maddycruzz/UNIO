@@ -54,6 +54,14 @@ import {
   loadEventFiles as storeLoadEventFiles,
   addEventFileLocal,
   deleteEventFileLocal,
+  // Phase 4 — automation
+  loadTaskTemplates as storeLoadTaskTemplates,
+  addTaskTemplateLocal,
+  deleteTaskTemplateLocal,
+  loadTaskDependencies as storeLoadTaskDependencies,
+  addTaskDependencyLocal,
+  removeTaskDependencyLocal,
+  addTask as storeAddTask,
   type UnioEvent,
   type UnioTask,
   type UnioMeeting,
@@ -72,6 +80,11 @@ import {
   type SponsorTier,
   type SponsorStatus,
   type FileKind,
+  type UnioTaskTemplate,
+  type UnioTaskTemplateItem,
+  type RecurrenceType,
+  type TaskPriority,
+  type TaskDependencyEdge,
 } from "@/lib/store";
 
 function notifyChange() {
@@ -298,6 +311,9 @@ function rowToMeeting(row: Record<string, unknown>): UnioMeeting {
     attendees:  (row.attendees as { i: string; c: string }[]) ?? [],
     agenda:     row.agenda as string,
     notes:      row.notes as string,
+    recurrenceType:     (row.recurrence_type as UnioMeeting["recurrenceType"]) ?? "none",
+    recurrenceUntil:    (row.recurrence_until as string | null) ?? undefined,
+    recurrenceSeriesId: (row.recurrence_series_id as string | null) ?? undefined,
   };
 }
 
@@ -316,6 +332,9 @@ function meetingToRow(m: Partial<UnioMeeting>, organizerId?: string): Record<str
   if (m.attendees !== undefined) row.attendees = m.attendees;
   if (m.agenda !== undefined) row.agenda = m.agenda;
   if (m.notes !== undefined) row.notes  = m.notes;
+  if (m.recurrenceType !== undefined) row.recurrence_type = m.recurrenceType;
+  if ("recurrenceUntil" in m) row.recurrence_until = m.recurrenceUntil ?? null;
+  if ("recurrenceSeriesId" in m) row.recurrence_series_id = m.recurrenceSeriesId ?? null;
   return row;
 }
 
@@ -1759,4 +1778,417 @@ export async function deleteEventFile(file: UnioEventFile): Promise<void> {
     if (error) console.warn("deleteEventFile (row):", error.message);
   }
   deleteEventFileLocal(file.id);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 4 — Automation
+// Task templates, task dependencies, recurring meetings, due reminders.
+// ═══════════════════════════════════════════════════════════════════
+
+// ── TASK TEMPLATES ──────────────────────────────────────────────────
+function rowToTaskTemplate(row: Record<string, unknown>, items: UnioTaskTemplateItem[] = []): UnioTaskTemplate {
+  return {
+    id:          row.id as string,
+    name:        row.name as string,
+    description: (row.description as string) ?? "",
+    eventType:   row.event_type as UnioTaskTemplate["eventType"],
+    isShared:    Boolean(row.is_shared),
+    createdAt:   row.created_at as string,
+    items,
+  };
+}
+
+function rowToTemplateItem(row: Record<string, unknown>): UnioTaskTemplateItem {
+  return {
+    id:          row.id as string,
+    templateId:  row.template_id as string,
+    title:       row.title as string,
+    description: (row.description as string) ?? "",
+    priority:    row.priority as TaskPriority,
+    division:    (row.division as string) ?? "",
+    daysOffset:  Number(row.days_offset ?? 0),
+    order:       Number(row.order ?? 0),
+  };
+}
+
+export async function loadTaskTemplates(): Promise<UnioTaskTemplate[]> {
+  if (!isSupabaseConfigured()) return storeLoadTaskTemplates();
+  const { data: tpls, error: e1 } = await supabase
+    .from("task_templates")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (e1 || !tpls) {
+    console.warn("loadTaskTemplates:", e1?.message);
+    return storeLoadTaskTemplates();
+  }
+  if (tpls.length === 0) return [];
+  const ids = tpls.map((t) => t.id);
+  const { data: items } = await supabase
+    .from("task_template_items")
+    .select("*")
+    .in("template_id", ids)
+    .order("order", { ascending: true });
+  const byTpl = new Map<string, UnioTaskTemplateItem[]>();
+  for (const r of items ?? []) {
+    const item = rowToTemplateItem(r);
+    if (!byTpl.has(item.templateId)) byTpl.set(item.templateId, []);
+    byTpl.get(item.templateId)!.push(item);
+  }
+  return tpls.map((t) => rowToTaskTemplate(t, byTpl.get(t.id as string) ?? []));
+}
+
+export async function addTaskTemplate(input: {
+  name: string;
+  description?: string;
+  eventType: UnioTaskTemplate["eventType"];
+  isShared?: boolean;
+  items: Array<Omit<UnioTaskTemplateItem, "id" | "templateId">>;
+}): Promise<UnioTaskTemplate | { ok: false; error: string }> {
+  const draft: UnioTaskTemplate = {
+    id: crypto.randomUUID(),
+    name: input.name,
+    description: input.description ?? "",
+    eventType: input.eventType,
+    isShared: input.isShared ?? false,
+    createdAt: new Date().toISOString(),
+    items: input.items.map((it, idx) => ({
+      ...it,
+      id: crypto.randomUUID(),
+      templateId: "local",
+      order: it.order ?? idx,
+    })),
+  };
+
+  if (!isSupabaseConfigured()) {
+    addTaskTemplateLocal(draft);
+    return draft;
+  }
+
+  const ctx = await getUserContext();
+  if (!ctx) return { ok: false, error: "not_authenticated" };
+
+  const { data: tpl, error } = await supabase
+    .from("task_templates")
+    .insert({
+      organizer_id: ctx.userId,
+      name: input.name,
+      description: input.description ?? "",
+      event_type: input.eventType,
+      is_shared: input.isShared ?? false,
+    })
+    .select()
+    .single();
+  if (error || !tpl) return { ok: false, error: error?.message ?? "insert_failed" };
+
+  const templateId = tpl.id as string;
+  if (input.items.length > 0) {
+    const itemRows = input.items.map((it, idx) => ({
+      template_id: templateId,
+      title: it.title,
+      description: it.description ?? "",
+      priority: it.priority ?? "Medium",
+      division: it.division ?? "",
+      days_offset: it.daysOffset ?? 0,
+      order: it.order ?? idx,
+    }));
+    const { error: itErr } = await supabase.from("task_template_items").insert(itemRows);
+    if (itErr) console.warn("addTaskTemplate items:", itErr.message);
+  }
+
+  const created = rowToTaskTemplate(tpl, draft.items.map((it) => ({ ...it, templateId })));
+  addTaskTemplateLocal(created);
+  return created;
+}
+
+export async function deleteTaskTemplate(id: string): Promise<void> {
+  deleteTaskTemplateLocal(id);
+  if (!isSupabaseConfigured()) return;
+  const { error } = await supabase.from("task_templates").delete().eq("id", id);
+  if (error) console.warn("deleteTaskTemplate:", error.message);
+}
+
+export async function applyTaskTemplate(input: {
+  templateId: string;
+  eventId: string;
+  startDate?: string;
+}): Promise<{ ok: boolean; inserted?: number; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    // Local fallback: read the template, expand into tasks via storeAddTask.
+    const tpl = storeLoadTaskTemplates().find((t) => t.id === input.templateId);
+    if (!tpl) return { ok: false, error: "template_not_found" };
+    const start = input.startDate ? new Date(input.startDate) : new Date();
+    const events = storeLoadEvents();
+    const event = events.find((e) => e.id === input.eventId);
+    if (!event) return { ok: false, error: "event_not_found" };
+    let inserted = 0;
+    for (const it of tpl.items) {
+      const due = new Date(start.getTime() + (it.daysOffset || 0) * 86_400_000);
+      const dueLabel = due.toLocaleString("en-US", { month: "short", day: "2-digit" });
+      storeAddTask({
+        id: `t${Date.now()}_${inserted}`,
+        title: it.title,
+        event: event.name,
+        eventColor: "#6366F1",
+        priority: it.priority,
+        status: "todo",
+        due: dueLabel,
+        assignees: [],
+        description: it.description,
+        division: it.division || undefined,
+        order: it.order,
+      });
+      inserted++;
+    }
+    return { ok: true, inserted };
+  }
+
+  const { data, error } = await supabase.rpc("apply_task_template", {
+    p_template_id: input.templateId,
+    p_event_id: input.eventId,
+    p_start_date: input.startDate ?? new Date().toISOString().slice(0, 10),
+  });
+  if (error) return { ok: false, error: error.message };
+  const r = data as { ok: boolean; inserted?: number; error?: string };
+  return r;
+}
+
+// ── TASK DEPENDENCIES ───────────────────────────────────────────────
+export async function loadTaskDependencies(): Promise<TaskDependencyEdge[]> {
+  if (!isSupabaseConfigured()) return storeLoadTaskDependencies();
+  const { data, error } = await supabase
+    .from("task_dependencies")
+    .select("task_id, depends_on_task_id");
+  if (error) {
+    console.warn("loadTaskDependencies:", error.message);
+    return storeLoadTaskDependencies();
+  }
+  return (data ?? []).map((r) => ({
+    taskId: r.task_id as string,
+    dependsOnTaskId: r.depends_on_task_id as string,
+  }));
+}
+
+export async function addTaskDependency(edge: TaskDependencyEdge): Promise<{ ok: boolean; error?: string }> {
+  addTaskDependencyLocal(edge);
+  if (!isSupabaseConfigured()) return { ok: true };
+  const { error } = await supabase.from("task_dependencies").insert({
+    task_id: edge.taskId,
+    depends_on_task_id: edge.dependsOnTaskId,
+  });
+  if (error && !error.message.includes("duplicate")) {
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+export async function removeTaskDependency(edge: TaskDependencyEdge): Promise<void> {
+  removeTaskDependencyLocal(edge);
+  if (!isSupabaseConfigured()) return;
+  const { error } = await supabase
+    .from("task_dependencies")
+    .delete()
+    .eq("task_id", edge.taskId)
+    .eq("depends_on_task_id", edge.dependsOnTaskId);
+  if (error) console.warn("removeTaskDependency:", error.message);
+}
+
+/** True when every dependency of `taskId` is marked done. */
+export function isTaskUnblocked(taskId: string, allTasks: UnioTask[], deps: TaskDependencyEdge[]): boolean {
+  const parents = deps.filter((d) => d.taskId === taskId).map((d) => d.dependsOnTaskId);
+  if (parents.length === 0) return true;
+  return parents.every((pid) => allTasks.find((t) => t.id === pid)?.status === "done");
+}
+
+// ── RECURRING MEETINGS ──────────────────────────────────────────────
+/**
+ * Expand a meeting series into instances and persist them. Returns the
+ * full list of meetings created (including the seed).
+ *
+ * The caller passes the "seed" meeting (the first occurrence) plus the
+ * recurrence pattern. We compute subsequent dates and insert one row
+ * per occurrence, all sharing the same recurrence_series_id.
+ */
+export async function addRecurringMeetings(input: {
+  seed: UnioMeeting;
+  recurrenceType: Exclude<RecurrenceType, "none">;
+  until: string;
+}): Promise<UnioMeeting[]> {
+  const series_id = crypto.randomUUID();
+  const seedDate = parseLooseDate(input.seed.date);
+  const untilDate = new Date(input.until);
+  if (!seedDate || isNaN(untilDate.getTime()) || untilDate < seedDate) {
+    // Fall back to inserting just the seed.
+    await addMeeting({ ...input.seed, recurrenceType: "none" });
+    return [input.seed];
+  }
+  const stepDays =
+    input.recurrenceType === "daily"    ? 1 :
+    input.recurrenceType === "weekly"   ? 7 :
+    input.recurrenceType === "biweekly" ? 14 :
+    /* monthly */                          30;
+
+  const occurrences: UnioMeeting[] = [];
+  let cursor = new Date(seedDate);
+  let i = 0;
+  // Cap to 52 to prevent runaway loops.
+  while (cursor <= untilDate && i < 52) {
+    const m: UnioMeeting = {
+      ...input.seed,
+      id: i === 0 ? input.seed.id : `m${Date.now()}_${i}`,
+      date: formatDateLabel(cursor),
+      recurrenceType: input.recurrenceType,
+      recurrenceUntil: input.until,
+      recurrenceSeriesId: series_id,
+    };
+    occurrences.push(m);
+    if (input.recurrenceType === "monthly") {
+      cursor = new Date(cursor);
+      cursor.setMonth(cursor.getMonth() + 1);
+    } else {
+      cursor = new Date(cursor.getTime() + stepDays * 86_400_000);
+    }
+    i++;
+  }
+
+  for (const m of occurrences) {
+    await addMeeting(m);
+  }
+  return occurrences;
+}
+
+function parseLooseDate(s: string): Date | null {
+  // Try ISO first.
+  const iso = new Date(s);
+  if (!isNaN(iso.getTime())) return iso;
+  return null;
+}
+
+function formatDateLabel(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// ── DUE REMINDERS ───────────────────────────────────────────────────
+export async function checkDueReminders(): Promise<{ ok: boolean; created?: number; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    // Local-only: scan tasks, create local "due_soon" notifications inline.
+    const tasks = storeLoadTasks();
+    const today = new Date();
+    const tomorrow = new Date(today.getTime() + 86_400_000);
+    const todayLabel = today.toLocaleString("en-US", { month: "short", day: "2-digit" });
+    const tomorrowLabel = tomorrow.toLocaleString("en-US", { month: "short", day: "2-digit" });
+    const matches = tasks.filter(
+      (t) => t.status !== "done" && (t.due.startsWith(todayLabel) || t.due.startsWith(tomorrowLabel))
+    );
+    const existing = storeLoadNotifications();
+    const known = new Set(
+      existing
+        .filter((n) => n.type === "due_soon")
+        .map((n) => (n.payload as { task_id?: string }).task_id)
+    );
+    const fresh = matches.filter((t) => !known.has(t.id));
+    if (fresh.length === 0) return { ok: true, created: 0 };
+    const now = new Date().toISOString();
+    storeSaveNotifications([
+      ...fresh.map((t) => ({
+        id: crypto.randomUUID(),
+        userId: "local",
+        type: "due_soon" as const,
+        payload: { task_id: t.id, title: t.title },
+        createdAt: now,
+      })),
+      ...existing,
+    ]);
+    return { ok: true, created: fresh.length };
+  }
+  const { data, error } = await supabase.rpc("check_due_reminders");
+  if (error) return { ok: false, error: error.message };
+  return data as { ok: boolean; created?: number };
+}
+
+// ── AI BRIEF (template-based, deterministic) ────────────────────────
+/**
+ * Synthesizes an event brief from the event's tasks, meetings, participants,
+ * budget, and sponsors. Returns markdown the caller can render or copy.
+ */
+export async function generateEventBrief(eventId: string): Promise<string> {
+  const [event, tasks, meetings, participants, budget, sponsors, feedback] = await Promise.all([
+    getEventById(eventId),
+    loadTasks(),
+    loadMeetings(),
+    getParticipantsForEvent(eventId),
+    loadBudgetEntries(eventId),
+    loadSponsors(eventId),
+    loadFeedback(eventId),
+  ]);
+
+  if (!event) return "Event not found.";
+
+  const eventTasks = tasks.filter((t) => t.event === event.name);
+  const eventMeetings = meetings.filter((m) => m.event === event.name);
+  const tasksDone = eventTasks.filter((t) => t.status === "done").length;
+  const tasksOpen = eventTasks.filter((t) => t.status !== "done").length;
+  const highPriOpen = eventTasks.filter((t) => t.status !== "done" && t.priority === "High").length;
+  const upcomingMeetings = eventMeetings.filter((m) => m.status === "upcoming");
+  const totalRegistered = participants.filter((p) => p.status !== "cancelled" && p.status !== "waitlisted").length;
+  const totalWaitlisted = participants.filter((p) => p.status === "waitlisted").length;
+  const totalCheckedIn = participants.filter((p) => p.status === "checked-in" || p.status === "attended").length;
+  const income = budget.filter((b) => b.kind === "income").reduce((s, b) => s + b.amount, 0);
+  const expense = budget.filter((b) => b.kind === "expense").reduce((s, b) => s + b.amount, 0);
+  const sponsorsConfirmed = sponsors.filter((s) => s.status === "confirmed");
+  const avgRating = feedback.length
+    ? (feedback.reduce((s, f) => s + f.rating, 0) / feedback.length).toFixed(1)
+    : null;
+
+  const lines: string[] = [];
+  lines.push(`# ${event.name}`);
+  lines.push(`_${event.type} · ${event.date} · ${event.venue}_`);
+  lines.push("");
+  if (event.description) {
+    lines.push(event.description);
+    lines.push("");
+  }
+
+  lines.push("## Snapshot");
+  lines.push(`- **Status:** ${event.status}${event.daysRemaining > 0 ? ` · ${event.daysRemaining} days remaining` : ""}`);
+  lines.push(`- **Participants:** ${totalRegistered} registered${event.capacity ? ` / ${event.capacity} capacity` : ""}${totalWaitlisted ? ` · ${totalWaitlisted} on waitlist` : ""}${totalCheckedIn ? ` · ${totalCheckedIn} checked in` : ""}`);
+  lines.push(`- **Tasks:** ${tasksDone} done · ${tasksOpen} open${highPriOpen ? ` · ${highPriOpen} high-priority open` : ""}`);
+  if (upcomingMeetings.length) lines.push(`- **Upcoming meetings:** ${upcomingMeetings.length}`);
+  if (avgRating != null) lines.push(`- **Feedback:** ${avgRating}/5 across ${feedback.length} response${feedback.length === 1 ? "" : "s"}`);
+  lines.push("");
+
+  if (budget.length) {
+    lines.push("## Budget");
+    lines.push(`- Income: **${income.toFixed(2)}**`);
+    lines.push(`- Expense: **${expense.toFixed(2)}**`);
+    lines.push(`- Net: **${(income - expense).toFixed(2)}**`);
+    lines.push("");
+  }
+
+  if (sponsorsConfirmed.length) {
+    lines.push("## Confirmed sponsors");
+    for (const s of sponsorsConfirmed) {
+      lines.push(`- **${s.name}** (${s.tier})${s.amount > 0 ? ` — ${s.amount.toFixed(0)}` : ""}`);
+    }
+    lines.push("");
+  }
+
+  if (upcomingMeetings.length) {
+    lines.push("## Upcoming meetings");
+    for (const m of upcomingMeetings.slice(0, 5)) {
+      lines.push(`- ${m.title} — ${m.date} ${m.time}`);
+    }
+    lines.push("");
+  }
+
+  if (highPriOpen) {
+    lines.push("## High-priority open tasks");
+    for (const t of eventTasks.filter((t) => t.status !== "done" && t.priority === "High").slice(0, 8)) {
+      lines.push(`- [ ] ${t.title}${t.due ? ` — *${t.due}*` : ""}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("---");
+  lines.push(`_Generated ${new Date().toLocaleString()}_`);
+  return lines.join("\n");
 }
