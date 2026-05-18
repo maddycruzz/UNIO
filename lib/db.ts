@@ -870,23 +870,37 @@ export async function loadAnnouncements(): Promise<UnioAnnouncement[]> {
   if (!ctx) return storeLoadAnnouncements();
 
   // Fetch announcements + author profile so the UI can render a name/initials.
+  // We do NOT filter expires_at server-side because PostgREST's .or() with
+  // a fully-precision ISO timestamp can silently fail on some payloads —
+  // expired rows are cheap, just hide them client-side.
   const { data, error } = await supabase
     .from("announcements")
     .select("*, profiles:author_id(name, initials)")
     .eq("club_id", ctx.activeClubId)
-    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
     .order("pinned", { ascending: false })
     .order("created_at", { ascending: false });
-  if (error || !data) return storeLoadAnnouncements();
+  if (error) {
+    console.error("loadAnnouncements failed:", error.message);
+    return storeLoadAnnouncements();
+  }
+  if (!data) return storeLoadAnnouncements();
 
-  const items: UnioAnnouncement[] = data.map((row) => {
-    const profile = (row as { profiles?: { name?: string; initials?: string } }).profiles;
-    return {
-      ...rowToAnnouncement(row as Record<string, unknown>),
-      authorName: profile?.name,
-      authorInitials: profile?.initials,
-    };
-  });
+  const now = Date.now();
+  const items: UnioAnnouncement[] = data
+    .filter((row) => {
+      const ex = (row as { expires_at?: string }).expires_at;
+      if (!ex) return true;
+      const t = new Date(ex).getTime();
+      return isNaN(t) || t > now;
+    })
+    .map((row) => {
+      const profile = (row as { profiles?: { name?: string; initials?: string } }).profiles;
+      return {
+        ...rowToAnnouncement(row as Record<string, unknown>),
+        authorName: profile?.name,
+        authorInitials: profile?.initials,
+      };
+    });
   storeSaveAnnouncements(items);
   return items;
 }
@@ -929,6 +943,11 @@ export async function addAnnouncement(
     throw new Error(error?.message || "Failed to create announcement");
   }
 
+  const created = rowToAnnouncement(data);
+  // Mirror to localStorage so the announcement is visible immediately even
+  // if the subsequent re-fetch from Supabase fails or is delayed.
+  addAnnouncementLocal(created);
+
   // Fan out is best-effort and time-capped — never blocks the user's success path.
   withTimeout(
     supabase.rpc("fanout_announcement", {
@@ -941,7 +960,7 @@ export async function addAnnouncement(
   ).then(undefined, (e) => console.warn("fanout_announcement failed:", e));
 
   notifyChange();
-  return rowToAnnouncement(data);
+  return created;
 }
 
 export async function deleteAnnouncement(id: string): Promise<void> {
