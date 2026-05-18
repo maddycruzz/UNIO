@@ -34,6 +34,11 @@ interface AuthContextValue {
 // ─── Storage key ────────────────────────────────────────────────
 const SESSION_KEY = "unio_session_v1";
 
+// Unified timeout for any Supabase auth call. Cellular / cold-start
+// edge functions routinely take 2–5s; anything tighter silently
+// sabotages real users on flaky networks.
+const AUTH_TIMEOUT_MS = 10_000;
+
 // ─── Demo users ─────────────────────────────────────────────────
 const DEMO_USERS: Record<string, AuthUser> = {
   "ayaan@college.edu": {
@@ -153,6 +158,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
             saveSession(authUser);
             setUser(authUser);
+            // Successful network hydration — clear any prior offline state.
+            setIsOffline(false);
 
             // Refresh the role in the background — no UI blocking, no timeout race.
             supabase
@@ -217,11 +224,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Auth guard: redirect unauthenticated users away from /dashboard
+  // Auth guard: redirect unauthenticated users away from /dashboard and /admin.
+  // (/admin has its own role check in app/admin/page.tsx for developer-only,
+  // but the *login* gate belongs here so we don't render a page flash first.)
   useEffect(() => {
     if (loading) return;
-    const isDashboard = pathname?.startsWith("/dashboard");
-    if (isDashboard && !user) {
+    const isProtected =
+      pathname?.startsWith("/dashboard") || pathname?.startsWith("/admin");
+    if (isProtected && !user) {
       router.replace("/login");
     }
   }, [user, loading, pathname, router]);
@@ -229,18 +239,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
       // ── Real Supabase auth ──
-      // If Supabase is configured and we are not offline
       if (isSupabaseConfigured() && !isOffline) {
-        // Generous 10s timeout — sign-in over a slow cellular connection or cold-start
-        // edge function can routinely exceed 2–5s. Anything less silently sabotages valid logins.
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Supabase is offline")), 10000));
-        
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Supabase is offline")), AUTH_TIMEOUT_MS)
+        );
+
         try {
           const { data, error } = await Promise.race([
             supabase.auth.signInWithPassword({ email, password }),
             timeoutPromise
           ]) as any;
-          
+
           if (error) return { success: false, error: error.message };
           if (data.user) {
             const authUser = supabaseUserToAuthUser(data.user);
@@ -248,6 +257,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             authUser.role = profile?.role || "president";
             saveSession(authUser);
             setUser(authUser);
+            // Reset offline flag — we just succeeded against the network.
+            setIsOffline(false);
             return { success: true };
           }
           return { success: false, error: "Sign-in failed. Please try again." };
@@ -267,9 +278,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: "Supabase is not configured." };
       }
 
-      // Add a safety timeout to the signup attempt
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Supabase is offline")), 4000));
-      
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Supabase is offline")), AUTH_TIMEOUT_MS)
+      );
+
       try {
         const { data, error } = await Promise.race([
           supabase.auth.signUp({
@@ -291,6 +303,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           authUser.role = profile?.role || "president";
           saveSession(authUser);
           setUser(authUser);
+          setIsOffline(false);
           return { success: true };
         }
         return { success: false, error: "Sign-up failed. Please try again." };
@@ -299,7 +312,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: "Network error during sign-up." };
       }
     },
-    [isOffline]
+    []
   );
 
   const loginWithGoogle = useCallback(async () => {
@@ -331,8 +344,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         router.push("/dashboard");
         return;
       }
+      // If Supabase login failed (no seeded demo account, network down, etc.)
+      // fall through to the localStorage demo path instead of dead-ending.
     }
-    if (typeof window !== "undefined") alert("Demo mode requires Supabase backend to be running.");
+    // No Supabase backend (or login failed): drop the seeded president into
+    // localStorage so the demo still works end-to-end against `lib/store.ts`.
+    saveSession(DEFAULT_DEMO_USER);
+    setUser(DEFAULT_DEMO_USER);
+    router.push("/dashboard");
   }, [router, login]);
 
   const logout = useCallback(async () => {
