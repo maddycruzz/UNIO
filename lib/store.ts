@@ -106,10 +106,27 @@ const KEYS = {
   participants: "unio_participants_v2",
   profile: "unio_profile_v1",
   activity: "unio_activity_v1",
-  seeded: "unio_seeded_v2",
+  seeded: "unio_seeded_v3",
 } as const;
 
 // ── Seed Data ────────────────────────────────────────────────
+// Seed dates are computed relative to module-load time so the demo
+// always looks fresh — no overdue tasks, no past "upcoming" meetings.
+
+const _NOW = Date.now();
+const _DAY_MS = 86_400_000;
+
+function _iso(daysFromNow: number): string {
+  return new Date(_NOW + daysFromNow * _DAY_MS).toISOString().slice(0, 10);
+}
+
+function _display(daysFromNow: number, time: string): string {
+  if (daysFromNow === 0) return `Today · ${time}`;
+  if (daysFromNow === 1) return `Tomorrow · ${time}`;
+  const d = new Date(_NOW + daysFromNow * _DAY_MS);
+  const month = d.toLocaleString("en-US", { month: "short" });
+  return `${month} ${d.getDate()} · ${time}`;
+}
 
 const SEED_EVENTS: UnioEvent[] = [
   {
@@ -117,7 +134,7 @@ const SEED_EVENTS: UnioEvent[] = [
     name: "Spring Fest Night Market",
     type: "Cultural",
     description: "Night market featuring food stalls, performances, and club showcases across the quad.",
-    date: "Mar 28 · 7:00 PM",
+    date: _display(5, "7:00 PM"),
     venue: "Central Quad",
     participants: 200,
     capacity: 300,
@@ -127,14 +144,14 @@ const SEED_EVENTS: UnioEvent[] = [
     tasksTotal: 16,
     daysRemaining: 5,
     assignees: ["AK", "MS", "JR"],
-    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+    createdAt: new Date(_NOW - _DAY_MS * 7).toISOString(),
   },
   {
     id: "ai-campus-panel",
     name: "AI in Campus Life Panel",
     type: "Conference",
     description: "Faculty, founders, and students discuss the role of AI on campus life.",
-    date: "Today · 5:30 PM",
+    date: _display(0, "5:30 PM"),
     venue: "Auditorium A",
     participants: 160,
     capacity: 200,
@@ -144,14 +161,14 @@ const SEED_EVENTS: UnioEvent[] = [
     tasksTotal: 20,
     daysRemaining: 0,
     assignees: ["RS", "LT", "NP"],
-    createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
+    createdAt: new Date(_NOW - _DAY_MS * 14).toISOString(),
   },
   {
     id: "founders-pitch-night",
     name: "Founders Club Pitch Night",
     type: "Tech",
     description: "Student founders pitch to alumni, angels, and faculty mentors.",
-    date: "Tomorrow · 7:00 PM",
+    date: _display(1, "7:00 PM"),
     venue: "Innovation Hub",
     participants: 120,
     capacity: 150,
@@ -161,14 +178,14 @@ const SEED_EVENTS: UnioEvent[] = [
     tasksTotal: 13,
     daysRemaining: 1,
     assignees: ["AK", "DL", "HS"],
-    createdAt: new Date(Date.now() - 86400000 * 10).toISOString(),
+    createdAt: new Date(_NOW - _DAY_MS * 10).toISOString(),
   },
   {
     id: "intramural-sports-meet",
     name: "Intramural Sports Meet",
     type: "Sports",
     description: "Full-day track and field meet bringing together intramural teams.",
-    date: "Apr 6 · 9:00 AM",
+    date: _display(-10, "9:00 AM"),
     venue: "Main Stadium",
     participants: 340,
     capacity: 500,
@@ -178,41 +195,41 @@ const SEED_EVENTS: UnioEvent[] = [
     tasksTotal: 20,
     daysRemaining: 0,
     assignees: ["CG", "VK", "RM"],
-    createdAt: new Date(Date.now() - 86400000 * 21).toISOString(),
+    createdAt: new Date(_NOW - _DAY_MS * 30).toISOString(),
   },
 ];
 
 const SEED_TASKS: UnioTask[] = [
-  { id: "t1", title: "Lock venue and timings", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "High", status: "done", due: "2026-03-15", assignees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }], description: "Confirm auditorium booking and finalize event timings with admin." },
-  { id: "t3", title: "Design posters and social assets", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "todo", due: "2026-03-28", assignees: [{ i: "JR", c: "#EC4899" }, { i: "AK", c: "#6366F1" }], description: "Create Instagram, WhatsApp, and print poster assets." },
-  { id: "t5", title: "Plan food stalls and logistics", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "inprogress", due: "2026-03-26", assignees: [{ i: "AK", c: "#6366F1" }], description: "Contact vendors and allocate stall positions on campus map." },
-  { id: "t7", title: "Confirm judges panel", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "High", status: "done", due: "2026-03-12", assignees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }], description: "Finalize 4 alumni + 2 faculty judges and share briefing doc." },
-  { id: "t11", title: "Coordinate AV and stage setup", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "High", status: "inprogress", due: "2026-03-27", assignees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }], description: "Ensure projector, mics, and livestream are configured." },
-  { id: "t12", title: "Finalize event schedule", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "Medium", status: "todo", due: "2026-04-01", assignees: [{ i: "AK", c: "#6366F1" }], description: "Create minute-by-minute schedule and share with all stakeholders." },
-  { id: "t9", title: "Send speaker invites", event: "AI in Campus Life Panel", eventColor: "#F59E0B", priority: "High", status: "done", due: "2026-03-08", assignees: [{ i: "RS", c: "#10B981" }, { i: "AK", c: "#6366F1" }], description: "Email confirmed speakers with schedule, venue, and logistics." },
-  { id: "t13", title: "Draft event communications", event: "AI in Campus Life Panel", eventColor: "#F59E0B", priority: "Low", status: "todo", due: "2026-04-05", assignees: [{ i: "AK", c: "#6366F1" }], description: "Write announcement posts for college newsletter and social media." },
+  { id: "t1", title: "Lock venue and timings", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "High", status: "done", due: _iso(-7), assignees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }], description: "Confirm auditorium booking and finalize event timings with admin." },
+  { id: "t3", title: "Design posters and social assets", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "todo", due: _iso(3), assignees: [{ i: "JR", c: "#EC4899" }, { i: "AK", c: "#6366F1" }], description: "Create Instagram, WhatsApp, and print poster assets." },
+  { id: "t5", title: "Plan food stalls and logistics", event: "Spring Fest Night Market", eventColor: "#6366F1", priority: "Medium", status: "inprogress", due: _iso(2), assignees: [{ i: "AK", c: "#6366F1" }], description: "Contact vendors and allocate stall positions on campus map." },
+  { id: "t7", title: "Confirm judges panel", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "High", status: "done", due: _iso(-3), assignees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }], description: "Finalize 4 alumni + 2 faculty judges and share briefing doc." },
+  { id: "t11", title: "Coordinate AV and stage setup", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "High", status: "inprogress", due: _iso(1), assignees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }], description: "Ensure projector, mics, and livestream are configured." },
+  { id: "t12", title: "Finalize event schedule", event: "Founders Club Pitch Night", eventColor: "#10B981", priority: "Medium", status: "todo", due: _iso(4), assignees: [{ i: "AK", c: "#6366F1" }], description: "Create minute-by-minute schedule and share with all stakeholders." },
+  { id: "t9", title: "Send speaker invites", event: "AI in Campus Life Panel", eventColor: "#F59E0B", priority: "High", status: "done", due: _iso(-5), assignees: [{ i: "RS", c: "#10B981" }, { i: "AK", c: "#6366F1" }], description: "Email confirmed speakers with schedule, venue, and logistics." },
+  { id: "t13", title: "Draft event communications", event: "AI in Campus Life Panel", eventColor: "#F59E0B", priority: "Low", status: "todo", due: _iso(6), assignees: [{ i: "AK", c: "#6366F1" }], description: "Write announcement posts for college newsletter and social media." },
 ];
 
 const SEED_MEETINGS: UnioMeeting[] = [
   {
     id: "m1", title: "Spring Fest Kickoff Sync", event: "Spring Fest Night Market", eventColor: "#6366F1",
-    date: "2026-03-04", time: "10:00", duration: 60, location: "Room 204, Admin Block",
+    date: _iso(-9), time: "10:00", duration: 60, location: "Room 204, Admin Block",
     status: "completed",
     attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "SP", c: "#EC4899" }],
     agenda: "1. Confirm venue booking\n2. Assign stall coordinators\n3. Set deadlines for design assets",
-    notes: "Venue confirmed for March 28. Riya to handle stall assignments by March 10. Design assets deadline set to March 20.",
+    notes: "Venue confirmed. Riya to handle stall assignments. Design assets deadline locked.",
   },
   {
     id: "m2", title: "Judges Briefing — Pitch Night", event: "Founders Club Pitch Night", eventColor: "#10B981",
-    date: "2026-03-06", time: "15:30", duration: 45, location: "Innovation Hub, Level 2",
+    date: _iso(-6), time: "15:30", duration: 45, location: "Innovation Hub, Level 2",
     status: "completed",
     attendees: [{ i: "AK", c: "#6366F1" }, { i: "HS", c: "#F97316" }, { i: "DL", c: "#14B8A6" }],
     agenda: "1. Walk judges through scoring rubric\n2. Confirm schedule and timings\n3. Share team bios",
-    notes: "All 6 judges confirmed. Scoring rubric approved. Bios to be collected by March 15.",
+    notes: "All 6 judges confirmed. Scoring rubric approved.",
   },
   {
     id: "m3", title: "AV & Stage Setup Review", event: "Founders Club Pitch Night", eventColor: "#10B981",
-    date: "2026-03-10", time: "11:00", duration: 30, location: "Google Meet",
+    date: _iso(0), time: "11:00", duration: 30, location: "Google Meet",
     status: "ongoing",
     attendees: [{ i: "AK", c: "#6366F1" }, { i: "DL", c: "#14B8A6" }],
     agenda: "1. Projector and mic check\n2. Livestream configuration\n3. Run-of-show walkthrough",
@@ -220,7 +237,7 @@ const SEED_MEETINGS: UnioMeeting[] = [
   },
   {
     id: "m4", title: "Speaker Prep Call — AI Panel", event: "AI in Campus Life Panel", eventColor: "#F59E0B",
-    date: "2026-03-12", time: "17:00", duration: 60, location: "Zoom",
+    date: _iso(2), time: "17:00", duration: 60, location: "Zoom",
     status: "upcoming",
     attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "LT", c: "#8B5CF6" }],
     agenda: "1. Introduce speakers to each other\n2. Walk through panel format\n3. Q&A prep and topic boundaries",
@@ -228,7 +245,7 @@ const SEED_MEETINGS: UnioMeeting[] = [
   },
   {
     id: "m5", title: "Spring Fest Final Walkthrough", event: "Spring Fest Night Market", eventColor: "#6366F1",
-    date: "2026-03-20", time: "14:00", duration: 90, location: "Central Quad",
+    date: _iso(4), time: "14:00", duration: 90, location: "Central Quad",
     status: "upcoming",
     attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }, { i: "SP", c: "#EC4899" }, { i: "JR", c: "#EC4899" }],
     agenda: "1. Physical walkthrough of stall layout\n2. Check power and lighting setup\n3. Confirm emergency contacts",
@@ -236,7 +253,7 @@ const SEED_MEETINGS: UnioMeeting[] = [
   },
   {
     id: "m6", title: "Post-Event Debrief", event: "AI in Campus Life Panel", eventColor: "#F59E0B",
-    date: "2026-04-08", time: "16:00", duration: 45, location: "Room 101, Student Center",
+    date: _iso(7), time: "16:00", duration: 45, location: "Room 101, Student Center",
     status: "upcoming",
     attendees: [{ i: "AK", c: "#6366F1" }, { i: "RS", c: "#10B981" }],
     agenda: "1. What went well\n2. What to improve\n3. Feedback from attendees",
@@ -258,9 +275,9 @@ const SEED_PARTICIPANTS: UnioParticipant[] = [
 const SEED_PROFILE: UserProfile = { name: "Ayaan", initials: "AK" };
 
 const SEED_ACTIVITY: ActivityItem[] = [
-  { id: "a1", title: "Spring Fest Night Market published", meta: "Events · Capacity 200", timestamp: Date.now() - 720000 },
-  { id: "a2", title: "Design club standup moved to Studio B", meta: "Meetings · Room change", timestamp: Date.now() - 2700000 },
-  { id: "a3", title: "QR check-ins exported for Hackathon Demo Day", meta: "Participants · CSV export", timestamp: Date.now() - 7200000 },
+  { id: "a1", title: "Spring Fest Night Market published", meta: "Events · Capacity 200", timestamp: _NOW - 720_000 },
+  { id: "a2", title: "Design club standup moved to Studio B", meta: "Meetings · Room change", timestamp: _NOW - 2_700_000 },
+  { id: "a3", title: "QR check-ins exported for Hackathon Demo Day", meta: "Participants · CSV export", timestamp: _NOW - 7_200_000 },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -453,6 +470,10 @@ export function saveProfile(profile: UserProfile): void {
 export function loadActivity(): ActivityItem[] {
   ensureSeeded();
   return load<ActivityItem[]>(KEYS.activity, SEED_ACTIVITY);
+}
+
+export function saveActivity(items: ActivityItem[]): void {
+  save(KEYS.activity, items.slice(0, 20));
 }
 
 export function addActivity(title: string, meta: string): void {
