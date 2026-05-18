@@ -15,6 +15,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { CommentDrawer } from "@/components/comments/CommentDrawer";
 import { PresenceAvatars } from "@/components/presence/PresenceAvatars";
 import { LifecyclePanel } from "@/components/events/LifecyclePanel";
+import { BudgetPanel } from "@/components/events/BudgetPanel";
+import { SponsorsPanel } from "@/components/events/SponsorsPanel";
+import { FilesPanel } from "@/components/events/FilesPanel";
 import {
   getEventById,
   loadTasks,
@@ -936,6 +939,12 @@ export default function EventDetailPage() {
         )}
 
         <LifecyclePanel eventId={String(eventId)} />
+
+        <section className="mt-6 grid gap-4 lg:grid-cols-2">
+          <BudgetPanel eventId={String(eventId)} />
+          <SponsorsPanel eventId={String(eventId)} />
+          <FilesPanel eventId={String(eventId)} />
+        </section>
       </motion.div>
       <CommentDrawer parentType="event" parentId={String(eventId)} />
       <PresenceAvatars channelKey={`event:${eventId}`} />
