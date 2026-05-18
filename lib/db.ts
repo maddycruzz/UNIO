@@ -869,13 +869,16 @@ export async function loadAnnouncements(): Promise<UnioAnnouncement[]> {
   const ctx = await getUserContext();
   if (!ctx) return storeLoadAnnouncements();
 
-  // Fetch announcements + author profile so the UI can render a name/initials.
-  // We do NOT filter expires_at server-side because PostgREST's .or() with
-  // a fully-precision ISO timestamp can silently fail on some payloads —
-  // expired rows are cheap, just hide them client-side.
+  // Fetch announcements (no PostgREST embed — the FK is to auth.users,
+  // not to public.profiles, so the embed route doesn't exist). We hydrate
+  // author names with a separate batched profiles lookup.
+  //
+  // We also do NOT filter expires_at server-side because PostgREST's .or()
+  // with a fully-precision ISO timestamp can silently fail — expired rows
+  // are cheap, just hide them client-side.
   const { data, error } = await supabase
     .from("announcements")
-    .select("*, profiles:author_id(name, initials)")
+    .select("*")
     .eq("club_id", ctx.activeClubId)
     .order("pinned", { ascending: false })
     .order("created_at", { ascending: false });
@@ -884,6 +887,19 @@ export async function loadAnnouncements(): Promise<UnioAnnouncement[]> {
     return storeLoadAnnouncements();
   }
   if (!data) return storeLoadAnnouncements();
+
+  // Batched profile lookup for author names.
+  const authorIds = Array.from(new Set(data.map((r) => (r as { author_id: string }).author_id))).filter(Boolean);
+  const profileByAuthor = new Map<string, { name?: string; initials?: string }>();
+  if (authorIds.length > 0) {
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("id, name, initials")
+      .in("id", authorIds);
+    for (const p of profs ?? []) {
+      profileByAuthor.set(p.id as string, { name: p.name as string, initials: p.initials as string });
+    }
+  }
 
   const now = Date.now();
   const items: UnioAnnouncement[] = data
@@ -894,9 +910,10 @@ export async function loadAnnouncements(): Promise<UnioAnnouncement[]> {
       return isNaN(t) || t > now;
     })
     .map((row) => {
-      const profile = (row as { profiles?: { name?: string; initials?: string } }).profiles;
+      const r = row as Record<string, unknown>;
+      const profile = profileByAuthor.get(r.author_id as string);
       return {
-        ...rowToAnnouncement(row as Record<string, unknown>),
+        ...rowToAnnouncement(r),
         authorName: profile?.name,
         authorInitials: profile?.initials,
       };
@@ -1030,14 +1047,38 @@ function rowToComment(row: Record<string, unknown>): UnioComment {
 
 export async function loadCommentsFor(parentType: CommentParentType, parentId: string): Promise<UnioComment[]> {
   if (!isSupabaseConfigured()) return storeLoadComments(parentType, parentId);
+  // No PostgREST embed — FK points to auth.users, not public.profiles.
+  // Hydrate author names with a batched lookup.
   const { data, error } = await supabase
     .from("comments")
-    .select("*, profiles:author_id(name, initials)")
+    .select("*")
     .eq("parent_type", parentType)
     .eq("parent_id", parentId)
     .order("created_at", { ascending: true });
-  if (error || !data) return storeLoadComments(parentType, parentId);
-  return data.map((r) => rowToComment(r as Record<string, unknown>));
+  if (error) {
+    console.error("loadCommentsFor failed:", error.message);
+    return storeLoadComments(parentType, parentId);
+  }
+  if (!data) return storeLoadComments(parentType, parentId);
+
+  const authorIds = Array.from(new Set(data.map((r) => (r as { author_id: string }).author_id))).filter(Boolean);
+  const profileByAuthor = new Map<string, { name?: string; initials?: string }>();
+  if (authorIds.length > 0) {
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("id, name, initials")
+      .in("id", authorIds);
+    for (const p of profs ?? []) {
+      profileByAuthor.set(p.id as string, { name: p.name as string, initials: p.initials as string });
+    }
+  }
+
+  return data.map((row) => {
+    const r = row as Record<string, unknown>;
+    const profile = profileByAuthor.get(r.author_id as string);
+    const c = rowToComment(r);
+    return { ...c, authorName: profile?.name, authorInitials: profile?.initials };
+  });
 }
 
 export async function addComment(input: {
@@ -1062,6 +1103,7 @@ export async function addComment(input: {
   const ctx = await withTimeout(getUserContext(), 5000, "getUserContext timed out");
   if (!ctx) throw new Error("Failed to get user context");
 
+  // No embed on the select — FK is to auth.users, not profiles.
   const { data, error } = await supabase
     .from("comments")
     .insert({
@@ -1072,12 +1114,17 @@ export async function addComment(input: {
       body_md:     input.bodyMd,
       mentions,
     })
-    .select("*, profiles:author_id(name, initials)")
+    .select()
     .single();
   if (error || !data) throw new Error(error?.message || "Failed to create comment");
 
+  const created = rowToComment(data as Record<string, unknown>);
+  // Mirror to localStorage so the comment shows up immediately even if a
+  // subsequent re-fetch hits a transient error.
+  addCommentLocal(created);
+
   if (mentions.length > 0) {
-    await supabase.rpc("fanout_mentions", {
+    supabase.rpc("fanout_mentions", {
       p_club_id:     ctx.activeClubId,
       p_comment_id:  data.id,
       p_mentions:    mentions,
@@ -1086,7 +1133,8 @@ export async function addComment(input: {
     }).then(undefined, (e) => console.warn("fanout_mentions failed:", e));
   }
 
-  return rowToComment(data as Record<string, unknown>);
+  notifyChange();
+  return created;
 }
 
 export async function deleteComment(id: string): Promise<void> {
