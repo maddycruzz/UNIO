@@ -12,6 +12,8 @@ import {
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { CommentDrawer } from "@/components/comments/CommentDrawer";
+import { PresenceAvatars } from "@/components/presence/PresenceAvatars";
 import {
   getEventById,
   loadTasks,
@@ -933,6 +935,8 @@ export default function EventDetailPage() {
         )}
 
       </motion.div>
+      <CommentDrawer parentType="event" parentId={String(eventId)} />
+      <PresenceAvatars channelKey={`event:${eventId}`} />
     </div>
   );
 }
