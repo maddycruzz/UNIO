@@ -35,7 +35,13 @@ export type PermissionAction =
   | "events.toggle_public"
   | "events.broadcast"
   | "feedback.view"
-  | "certificates.issue_bulk";
+  | "certificates.issue_bulk"
+  | "budgets.view"
+  | "budgets.edit"
+  | "sponsors.view"
+  | "sponsors.edit"
+  | "files.upload"
+  | "files.delete";
 
 /**
  * The SINGLE SOURCE OF TRUTH for UI-level permissions.
@@ -74,6 +80,12 @@ export const PERMISSIONS: Record<PermissionAction, Role[]> = {
   "events.broadcast": ["developer", "president"],
   "feedback.view": ["developer", "president", "mate"],
   "certificates.issue_bulk": ["developer", "president"],
+  "budgets.view": ["developer", "president", "mate"],
+  "budgets.edit": ["developer", "president"],
+  "sponsors.view": ["developer", "president", "mate"],
+  "sponsors.edit": ["developer", "president"],
+  "files.upload": ["developer", "president", "mate"],
+  "files.delete": ["developer", "president"],
 };
 
 /**

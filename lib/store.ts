@@ -179,6 +179,54 @@ export interface UnioCertificate {
   issuedAt: string;
 }
 
+// ── Phase 3: Budgets, sponsors, files ────────────────────────
+
+export type BudgetKind = "income" | "expense";
+
+export interface UnioBudgetEntry {
+  id: string;
+  eventId: string;
+  kind: BudgetKind;
+  category: string;
+  label: string;
+  amount: number;
+  notes: string;
+  paidAt?: string;
+  createdAt: string;
+}
+
+export type SponsorTier = "platinum" | "gold" | "silver" | "bronze" | "partner";
+export type SponsorStatus = "prospect" | "contacted" | "confirmed" | "declined";
+
+export interface UnioSponsor {
+  id: string;
+  eventId: string;
+  name: string;
+  tier: SponsorTier;
+  status: SponsorStatus;
+  amount: number;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  logoUrl?: string;
+  notes: string;
+  createdAt: string;
+}
+
+export type FileKind = "cover" | "attachment" | "poster" | "sponsor_logo";
+
+export interface UnioEventFile {
+  id: string;
+  eventId: string;
+  kind: FileKind;
+  name: string;
+  mime: string;
+  sizeBytes: number;
+  storagePath: string;
+  publicUrl?: string;
+  createdAt: string;
+}
+
 // ── Keys ─────────────────────────────────────────────────────
 
 const KEYS = {
@@ -197,6 +245,10 @@ const KEYS = {
   // Phase 2 — participant lifecycle
   feedback: "unio_feedback_v1",
   certificates: "unio_certificates_v1",
+  // Phase 3 — budgets, sponsors, files
+  budgets: "unio_budgets_v1",
+  sponsors: "unio_sponsors_v1",
+  eventFiles: "unio_event_files_v1",
 } as const;
 
 // ── Seed Data ────────────────────────────────────────────────
@@ -696,6 +748,55 @@ export function loadCertificates(eventId?: string): UnioCertificate[] {
 export function saveCertificates(items: UnioCertificate[]): void {
   save(KEYS.certificates, items);
   notify("certificates");
+}
+
+// ── Phase 3: budgets + sponsors + files (local mirror) ───────
+export function loadBudgetEntries(eventId?: string): UnioBudgetEntry[] {
+  const all = load<UnioBudgetEntry[]>(KEYS.budgets, []);
+  return eventId ? all.filter((b) => b.eventId === eventId) : all;
+}
+export function saveBudgetEntries(items: UnioBudgetEntry[]): void {
+  save(KEYS.budgets, items);
+  notify("budgets");
+}
+export function addBudgetEntryLocal(b: UnioBudgetEntry): void {
+  saveBudgetEntries([b, ...load<UnioBudgetEntry[]>(KEYS.budgets, [])]);
+}
+export function deleteBudgetEntryLocal(id: string): void {
+  saveBudgetEntries(load<UnioBudgetEntry[]>(KEYS.budgets, []).filter((b) => b.id !== id));
+}
+
+export function loadSponsors(eventId?: string): UnioSponsor[] {
+  const all = load<UnioSponsor[]>(KEYS.sponsors, []);
+  return eventId ? all.filter((s) => s.eventId === eventId) : all;
+}
+export function saveSponsors(items: UnioSponsor[]): void {
+  save(KEYS.sponsors, items);
+  notify("sponsors");
+}
+export function addSponsorLocal(s: UnioSponsor): void {
+  saveSponsors([s, ...load<UnioSponsor[]>(KEYS.sponsors, [])]);
+}
+export function updateSponsorLocal(id: string, updates: Partial<UnioSponsor>): void {
+  saveSponsors(load<UnioSponsor[]>(KEYS.sponsors, []).map((s) => (s.id === id ? { ...s, ...updates } : s)));
+}
+export function deleteSponsorLocal(id: string): void {
+  saveSponsors(load<UnioSponsor[]>(KEYS.sponsors, []).filter((s) => s.id !== id));
+}
+
+export function loadEventFiles(eventId?: string): UnioEventFile[] {
+  const all = load<UnioEventFile[]>(KEYS.eventFiles, []);
+  return eventId ? all.filter((f) => f.eventId === eventId) : all;
+}
+export function saveEventFiles(items: UnioEventFile[]): void {
+  save(KEYS.eventFiles, items);
+  notify("event_files");
+}
+export function addEventFileLocal(f: UnioEventFile): void {
+  saveEventFiles([f, ...load<UnioEventFile[]>(KEYS.eventFiles, [])]);
+}
+export function deleteEventFileLocal(id: string): void {
+  saveEventFiles(load<UnioEventFile[]>(KEYS.eventFiles, []).filter((f) => f.id !== id));
 }
 
 // Format relative time for activity items

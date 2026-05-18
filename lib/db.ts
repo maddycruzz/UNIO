@@ -43,6 +43,17 @@ import {
   loadCertificates as storeLoadCertificates,
   saveCertificates as storeSaveCertificates,
   addParticipant as storeAddParticipant,
+  // Phase 3 — budgets, sponsors, files
+  loadBudgetEntries as storeLoadBudgetEntries,
+  addBudgetEntryLocal,
+  deleteBudgetEntryLocal,
+  loadSponsors as storeLoadSponsors,
+  addSponsorLocal,
+  updateSponsorLocal,
+  deleteSponsorLocal,
+  loadEventFiles as storeLoadEventFiles,
+  addEventFileLocal,
+  deleteEventFileLocal,
   type UnioEvent,
   type UnioTask,
   type UnioMeeting,
@@ -54,6 +65,13 @@ import {
   type UnioNotification,
   type UnioFeedback,
   type UnioCertificate,
+  type UnioBudgetEntry,
+  type UnioSponsor,
+  type UnioEventFile,
+  type BudgetKind,
+  type SponsorTier,
+  type SponsorStatus,
+  type FileKind,
 } from "@/lib/store";
 
 function notifyChange() {
@@ -1411,4 +1429,334 @@ export async function broadcastToParticipants(input: {
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : "broadcast_error" };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 3 — Budgets, Sponsors, Files
+// ═══════════════════════════════════════════════════════════════════
+
+// ── BUDGET ENTRIES ──────────────────────────────────────────────────
+function rowToBudget(row: Record<string, unknown>): UnioBudgetEntry {
+  return {
+    id:        row.id as string,
+    eventId:   row.event_id as string,
+    kind:      row.kind as BudgetKind,
+    category:  (row.category as string) ?? "Other",
+    label:     row.label as string,
+    amount:    Number(row.amount ?? 0),
+    notes:     (row.notes as string) ?? "",
+    paidAt:    (row.paid_at as string | null) ?? undefined,
+    createdAt: row.created_at as string,
+  };
+}
+
+export async function loadBudgetEntries(eventId: string): Promise<UnioBudgetEntry[]> {
+  if (!isSupabaseConfigured()) return storeLoadBudgetEntries(eventId);
+  const { data, error } = await supabase
+    .from("budget_entries")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.warn("loadBudgetEntries:", error.message);
+    return storeLoadBudgetEntries(eventId);
+  }
+  return (data ?? []).map(rowToBudget);
+}
+
+export async function addBudgetEntry(input: {
+  eventId: string;
+  kind: BudgetKind;
+  category: string;
+  label: string;
+  amount: number;
+  notes?: string;
+  paidAt?: string;
+}): Promise<UnioBudgetEntry | null> {
+  const draft: UnioBudgetEntry = {
+    id: crypto.randomUUID(),
+    eventId: input.eventId,
+    kind: input.kind,
+    category: input.category || "Other",
+    label: input.label,
+    amount: Number(input.amount) || 0,
+    notes: input.notes ?? "",
+    paidAt: input.paidAt,
+    createdAt: new Date().toISOString(),
+  };
+  if (!isSupabaseConfigured()) {
+    addBudgetEntryLocal(draft);
+    return draft;
+  }
+  const ctx = await getUserContext();
+  if (!ctx) {
+    addBudgetEntryLocal(draft);
+    return draft;
+  }
+  const { data, error } = await supabase
+    .from("budget_entries")
+    .insert({
+      event_id: input.eventId,
+      organizer_id: ctx.userId,
+      kind: input.kind,
+      category: input.category || "Other",
+      label: input.label,
+      amount: input.amount,
+      notes: input.notes ?? "",
+      paid_at: input.paidAt ?? null,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.warn("addBudgetEntry:", error.message);
+    addBudgetEntryLocal(draft);
+    return draft;
+  }
+  const row = rowToBudget(data);
+  addBudgetEntryLocal(row);
+  await logActivity(ctx.userId, "Budget entry added", `${input.kind === "income" ? "+" : "-"}${input.amount} · ${input.label}`);
+  return row;
+}
+
+export async function deleteBudgetEntry(id: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    deleteBudgetEntryLocal(id);
+    return;
+  }
+  const { error } = await supabase.from("budget_entries").delete().eq("id", id);
+  if (error) console.warn("deleteBudgetEntry:", error.message);
+  deleteBudgetEntryLocal(id);
+}
+
+// ── SPONSORS ────────────────────────────────────────────────────────
+function rowToSponsor(row: Record<string, unknown>): UnioSponsor {
+  return {
+    id:           row.id as string,
+    eventId:      row.event_id as string,
+    name:         row.name as string,
+    tier:         row.tier as SponsorTier,
+    status:       row.status as SponsorStatus,
+    amount:       Number(row.amount ?? 0),
+    contactName:  (row.contact_name as string) ?? "",
+    contactEmail: (row.contact_email as string) ?? "",
+    contactPhone: (row.contact_phone as string) ?? "",
+    logoUrl:      (row.logo_url as string | null) ?? undefined,
+    notes:        (row.notes as string) ?? "",
+    createdAt:    row.created_at as string,
+  };
+}
+
+export async function loadSponsors(eventId: string): Promise<UnioSponsor[]> {
+  if (!isSupabaseConfigured()) return storeLoadSponsors(eventId);
+  const { data, error } = await supabase
+    .from("sponsors")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.warn("loadSponsors:", error.message);
+    return storeLoadSponsors(eventId);
+  }
+  return (data ?? []).map(rowToSponsor);
+}
+
+export async function addSponsor(input: {
+  eventId: string;
+  name: string;
+  tier?: SponsorTier;
+  status?: SponsorStatus;
+  amount?: number;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  logoUrl?: string;
+  notes?: string;
+}): Promise<UnioSponsor | null> {
+  const draft: UnioSponsor = {
+    id: crypto.randomUUID(),
+    eventId: input.eventId,
+    name: input.name,
+    tier: input.tier ?? "silver",
+    status: input.status ?? "prospect",
+    amount: input.amount ?? 0,
+    contactName: input.contactName ?? "",
+    contactEmail: input.contactEmail ?? "",
+    contactPhone: input.contactPhone ?? "",
+    logoUrl: input.logoUrl,
+    notes: input.notes ?? "",
+    createdAt: new Date().toISOString(),
+  };
+  if (!isSupabaseConfigured()) {
+    addSponsorLocal(draft);
+    return draft;
+  }
+  const ctx = await getUserContext();
+  if (!ctx) {
+    addSponsorLocal(draft);
+    return draft;
+  }
+  const { data, error } = await supabase
+    .from("sponsors")
+    .insert({
+      event_id: input.eventId,
+      organizer_id: ctx.userId,
+      name: input.name,
+      tier: input.tier ?? "silver",
+      status: input.status ?? "prospect",
+      amount: input.amount ?? 0,
+      contact_name: input.contactName ?? "",
+      contact_email: input.contactEmail ?? "",
+      contact_phone: input.contactPhone ?? "",
+      logo_url: input.logoUrl ?? null,
+      notes: input.notes ?? "",
+    })
+    .select()
+    .single();
+  if (error) {
+    console.warn("addSponsor:", error.message);
+    addSponsorLocal(draft);
+    return draft;
+  }
+  const row = rowToSponsor(data);
+  addSponsorLocal(row);
+  return row;
+}
+
+export async function updateSponsor(id: string, updates: Partial<UnioSponsor>): Promise<void> {
+  updateSponsorLocal(id, updates);
+  if (!isSupabaseConfigured()) return;
+  const row: Record<string, unknown> = {};
+  if (updates.name !== undefined) row.name = updates.name;
+  if (updates.tier !== undefined) row.tier = updates.tier;
+  if (updates.status !== undefined) row.status = updates.status;
+  if (updates.amount !== undefined) row.amount = updates.amount;
+  if (updates.contactName !== undefined) row.contact_name = updates.contactName;
+  if (updates.contactEmail !== undefined) row.contact_email = updates.contactEmail;
+  if (updates.contactPhone !== undefined) row.contact_phone = updates.contactPhone;
+  if ("logoUrl" in updates) row.logo_url = updates.logoUrl ?? null;
+  if (updates.notes !== undefined) row.notes = updates.notes;
+  const { error } = await supabase.from("sponsors").update(row).eq("id", id);
+  if (error) console.warn("updateSponsor:", error.message);
+}
+
+export async function deleteSponsor(id: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    deleteSponsorLocal(id);
+    return;
+  }
+  const { error } = await supabase.from("sponsors").delete().eq("id", id);
+  if (error) console.warn("deleteSponsor:", error.message);
+  deleteSponsorLocal(id);
+}
+
+// ── EVENT FILES (Supabase Storage) ──────────────────────────────────
+const FILE_BUCKET = "event-files";
+
+function rowToEventFile(row: Record<string, unknown>): UnioEventFile {
+  return {
+    id:           row.id as string,
+    eventId:      row.event_id as string,
+    kind:         row.kind as FileKind,
+    name:         row.name as string,
+    mime:         row.mime as string,
+    sizeBytes:    Number(row.size_bytes ?? 0),
+    storagePath:  row.storage_path as string,
+    publicUrl:    (row.public_url as string | null) ?? undefined,
+    createdAt:    row.created_at as string,
+  };
+}
+
+export async function loadEventFiles(eventId: string): Promise<UnioEventFile[]> {
+  if (!isSupabaseConfigured()) return storeLoadEventFiles(eventId);
+  const { data, error } = await supabase
+    .from("event_files")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.warn("loadEventFiles:", error.message);
+    return storeLoadEventFiles(eventId);
+  }
+  return (data ?? []).map(rowToEventFile);
+}
+
+/**
+ * Uploads `file` to the event-files bucket and creates an event_files row.
+ * If Supabase isn't configured, falls back to a base64 data URL stored only
+ * in local state (no persistence beyond localStorage).
+ */
+export async function uploadEventFile(input: {
+  eventId: string;
+  file: File;
+  kind?: FileKind;
+}): Promise<UnioEventFile | { ok: false; error: string }> {
+  const kind = input.kind ?? "attachment";
+
+  if (!isSupabaseConfigured()) {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("read_failed"));
+      reader.readAsDataURL(input.file);
+    });
+    const rec: UnioEventFile = {
+      id: crypto.randomUUID(),
+      eventId: input.eventId,
+      kind,
+      name: input.file.name,
+      mime: input.file.type || "application/octet-stream",
+      sizeBytes: input.file.size,
+      storagePath: `local/${input.eventId}/${input.file.name}`,
+      publicUrl: dataUrl,
+      createdAt: new Date().toISOString(),
+    };
+    addEventFileLocal(rec);
+    return rec;
+  }
+
+  const ctx = await getUserContext();
+  if (!ctx) return { ok: false, error: "not_authenticated" };
+
+  const safeName = input.file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+  const path = `${ctx.userId}/${input.eventId}/${Date.now()}_${safeName}`;
+
+  const { error: upErr } = await supabase.storage.from(FILE_BUCKET).upload(path, input.file, {
+    contentType: input.file.type || undefined,
+    upsert: false,
+  });
+  if (upErr) return { ok: false, error: upErr.message };
+
+  const { data: pub } = supabase.storage.from(FILE_BUCKET).getPublicUrl(path);
+  const publicUrl = pub?.publicUrl;
+
+  const { data, error } = await supabase
+    .from("event_files")
+    .insert({
+      event_id: input.eventId,
+      organizer_id: ctx.userId,
+      uploaded_by: ctx.userId,
+      kind,
+      name: input.file.name,
+      mime: input.file.type || "application/octet-stream",
+      size_bytes: input.file.size,
+      storage_path: path,
+      public_url: publicUrl,
+    })
+    .select()
+    .single();
+  if (error) return { ok: false, error: error.message };
+
+  const rec = rowToEventFile(data);
+  addEventFileLocal(rec);
+  return rec;
+}
+
+export async function deleteEventFile(file: UnioEventFile): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const { error: storageErr } = await supabase.storage.from(FILE_BUCKET).remove([file.storagePath]);
+    if (storageErr) console.warn("deleteEventFile (storage):", storageErr.message);
+    const { error } = await supabase.from("event_files").delete().eq("id", file.id);
+    if (error) console.warn("deleteEventFile (row):", error.message);
+  }
+  deleteEventFileLocal(file.id);
 }
