@@ -31,6 +31,10 @@ export interface UnioEvent {
   createdAt: string;
   /** Optional cover image as a base64 data URL. Capped client-side; will move to blob storage when a backend exists. */
   coverImage?: string;
+  /** Phase 2: when true, /r/<id> public registration page is live. */
+  isPublic?: boolean;
+  registrationOpen?: boolean;
+  registrationClosesAt?: string;
 }
 
 export type TaskStatus = "todo" | "inprogress" | "done";
@@ -69,7 +73,14 @@ export interface UnioMeeting {
   notes: string;
 }
 
-export type ParticipantStatus = "checked-in" | "registered";
+export type ParticipantStatus =
+  | "registered"
+  | "checked-in"
+  | "waitlisted"
+  | "attended"
+  | "cancelled";
+
+export type ParticipantSource = "manual" | "public" | "import";
 
 export interface UnioParticipant {
   id: string;
@@ -82,6 +93,10 @@ export interface UnioParticipant {
   registeredAt: string;
   checkedInAt?: string;
   eventId: string;
+  /** Phase 2 — origin of this row. */
+  source?: ParticipantSource;
+  /** Phase 2 — waitlist queue position (1-based). */
+  waitlistPosition?: number;
 }
 
 export interface UserProfile {
@@ -143,6 +158,27 @@ export interface UnioNotification {
   createdAt: string;
 }
 
+// ── Phase 2: Participant lifecycle ───────────────────────────
+
+export interface UnioFeedback {
+  id: string;
+  eventId: string;
+  name: string;
+  email?: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+}
+
+export interface UnioCertificate {
+  id: string;
+  eventId: string;
+  participantId: string;
+  participantName: string;
+  participantEmail: string;
+  issuedAt: string;
+}
+
 // ── Keys ─────────────────────────────────────────────────────
 
 const KEYS = {
@@ -158,6 +194,9 @@ const KEYS = {
   announcementReads: "unio_announcement_reads_v1",
   comments: "unio_comments_v1",
   notifications: "unio_notifications_v1",
+  // Phase 2 — participant lifecycle
+  feedback: "unio_feedback_v1",
+  certificates: "unio_certificates_v1",
 } as const;
 
 // ── Seed Data ────────────────────────────────────────────────
@@ -635,6 +674,28 @@ export function markNotificationReadLocal(id: string): void {
 export function markAllNotificationsReadLocal(): void {
   const now = new Date().toISOString();
   saveNotifications(loadNotifications().map((n) => (n.readAt ? n : { ...n, readAt: now })));
+}
+
+// ── Phase 2: feedback + certs (local mirror) ─────────────────
+export function loadFeedback(eventId?: string): UnioFeedback[] {
+  const all = load<UnioFeedback[]>(KEYS.feedback, []);
+  return eventId ? all.filter((f) => f.eventId === eventId) : all;
+}
+export function saveFeedback(items: UnioFeedback[]): void {
+  save(KEYS.feedback, items);
+  notify("feedback");
+}
+export function addFeedbackLocal(f: UnioFeedback): void {
+  saveFeedback([f, ...load<UnioFeedback[]>(KEYS.feedback, [])]);
+}
+
+export function loadCertificates(eventId?: string): UnioCertificate[] {
+  const all = load<UnioCertificate[]>(KEYS.certificates, []);
+  return eventId ? all.filter((c) => c.eventId === eventId) : all;
+}
+export function saveCertificates(items: UnioCertificate[]): void {
+  save(KEYS.certificates, items);
+  notify("certificates");
 }
 
 // Format relative time for activity items

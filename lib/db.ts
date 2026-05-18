@@ -37,6 +37,12 @@ import {
   saveNotifications as storeSaveNotifications,
   markNotificationReadLocal,
   markAllNotificationsReadLocal,
+  // Phase 2 — participant lifecycle
+  loadFeedback as storeLoadFeedback,
+  addFeedbackLocal,
+  loadCertificates as storeLoadCertificates,
+  saveCertificates as storeSaveCertificates,
+  addParticipant as storeAddParticipant,
   type UnioEvent,
   type UnioTask,
   type UnioMeeting,
@@ -46,6 +52,8 @@ import {
   type UnioComment,
   type CommentParentType,
   type UnioNotification,
+  type UnioFeedback,
+  type UnioCertificate,
 } from "@/lib/store";
 
 function notifyChange() {
@@ -193,6 +201,9 @@ function rowToEvent(row: Record<string, unknown>): UnioEvent {
     endDate:       row.end_date as string | undefined,
     coverImage:    row.cover_image as string | undefined,
     createdAt:     row.created_at as string,
+    isPublic:      (row.is_public as boolean) ?? false,
+    registrationOpen: (row.registration_open as boolean) ?? true,
+    registrationClosesAt: (row.registration_closes_at as string | undefined) ?? undefined,
   };
 }
 
@@ -216,6 +227,9 @@ function eventToRow(event: Partial<UnioEvent>, organizerId?: string): Record<str
   if (event.startDate !== undefined) row.start_date = event.startDate;
   if (event.endDate !== undefined) row.end_date   = event.endDate;
   if (event.coverImage !== undefined) row.cover_image = event.coverImage;
+  if (event.isPublic !== undefined) row.is_public = event.isPublic;
+  if (event.registrationOpen !== undefined) row.registration_open = event.registrationOpen;
+  if ("registrationClosesAt" in event) row.registration_closes_at = event.registrationClosesAt ?? null;
   return row;
 }
 
@@ -299,6 +313,8 @@ function rowToParticipant(row: Record<string, unknown>): UnioParticipant {
     registeredAt: row.registered_at as string,
     checkedInAt:  row.checked_in_at as string | undefined,
     eventId:      row.event_id as string,
+    source:       (row.source as UnioParticipant["source"]) ?? undefined,
+    waitlistPosition: (row.waitlist_position as number | null) ?? undefined,
   };
 }
 
@@ -1094,4 +1110,305 @@ export function subscribeNotifications(userId: string, onChange: () => void): Re
     )
     .subscribe();
   return () => { supabase.removeChannel(channel); };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 2 — Participant Lifecycle
+// Public registration, waitlist, feedback, cert issuance, broadcast.
+// ═══════════════════════════════════════════════════════════════════
+
+export type PublicEventView = {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  date: string;
+  venue: string;
+  capacity: number | null;
+  registered: number;
+  status: string;
+  registration_open: boolean;
+  registration_closes_at: string | null;
+  cover_image: string | null;
+};
+
+/** Read-only public event projection — safe to call from anon (no session). */
+export async function getPublicEvent(eventId: string): Promise<PublicEventView | null> {
+  if (!isSupabaseConfigured()) {
+    const e = storeLoadEvents().find((x) => x.id === eventId);
+    if (!e) return null;
+    const registered = storeLoadParticipants().filter(
+      (p) => p.eventId === eventId && (p.status === "registered" || p.status === "checked-in" || p.status === "attended")
+    ).length;
+    return {
+      id: e.id, name: e.name, type: e.type, description: e.description,
+      date: e.date, venue: e.venue, capacity: e.capacity ?? null,
+      registered, status: e.status,
+      registration_open: e.registrationOpen ?? true,
+      registration_closes_at: e.registrationClosesAt ?? null,
+      cover_image: e.coverImage ?? null,
+    };
+  }
+  const { data, error } = await supabase.rpc("get_public_event", { p_event_id: eventId });
+  if (error) {
+    console.warn("getPublicEvent:", error.message);
+    return null;
+  }
+  const payload = data as { ok?: boolean; event?: PublicEventView };
+  if (!payload?.ok) return null;
+  return payload.event ?? null;
+}
+
+export type RegisterResult = {
+  ok: boolean;
+  status?: "registered" | "waitlisted";
+  participantId?: string;
+  waitlistPosition?: number | null;
+  error?: string;
+};
+
+export async function registerForEvent(input: {
+  eventId: string;
+  name: string;
+  email: string;
+  phone?: string;
+  dept?: string;
+  rollNo?: string;
+}): Promise<RegisterResult> {
+  if (!isSupabaseConfigured()) {
+    // Local-only fallback: mimic the RPC's behavior so the demo flow works.
+    const events = storeLoadEvents();
+    const event = events.find((e) => e.id === input.eventId);
+    if (!event) return { ok: false, error: "event_not_found" };
+    if (event.isPublic !== true) return { ok: false, error: "event_not_public" };
+    if (event.registrationOpen === false) return { ok: false, error: "registration_closed" };
+
+    const all = storeLoadParticipants();
+    const dupe = all.some(
+      (p) => p.eventId === input.eventId &&
+             p.email.toLowerCase() === input.email.toLowerCase() &&
+             p.status !== "cancelled"
+    );
+    if (dupe) return { ok: false, error: "already_registered" };
+
+    const activeCount = all.filter(
+      (p) => p.eventId === input.eventId &&
+             (p.status === "registered" || p.status === "checked-in" || p.status === "attended")
+    ).length;
+
+    let status: UnioParticipant["status"] = "registered";
+    let waitlistPosition: number | undefined;
+    if (event.capacity !== null && event.capacity !== undefined && activeCount >= event.capacity) {
+      status = "waitlisted";
+      const wlMax = all
+        .filter((p) => p.eventId === input.eventId && p.status === "waitlisted")
+        .reduce((m, p) => Math.max(m, p.waitlistPosition ?? 0), 0);
+      waitlistPosition = wlMax + 1;
+    }
+
+    const participantId = crypto.randomUUID();
+    storeAddParticipant({
+      id: participantId,
+      eventId: input.eventId,
+      name: input.name.trim(),
+      email: input.email.trim().toLowerCase(),
+      phone: input.phone ?? "",
+      rollNo: input.rollNo ?? "",
+      dept: input.dept ?? "",
+      status,
+      source: "public",
+      waitlistPosition,
+      registeredAt: "Just now",
+    });
+
+    return { ok: true, status, participantId, waitlistPosition };
+  }
+
+  const { data, error } = await supabase.rpc("register_for_event", {
+    p_event_id: input.eventId,
+    p_name: input.name,
+    p_email: input.email,
+    p_phone: input.phone ?? "",
+    p_dept: input.dept ?? "",
+    p_roll_no: input.rollNo ?? "",
+  });
+  if (error) return { ok: false, error: error.message };
+  const r = data as { ok: boolean; status?: string; participant_id?: string; waitlist_position?: number | null; error?: string };
+  return {
+    ok: r.ok,
+    status: r.status as RegisterResult["status"],
+    participantId: r.participant_id,
+    waitlistPosition: r.waitlist_position ?? null,
+    error: r.error,
+  };
+}
+
+export async function cancelRegistration(participantId: string): Promise<{ ok: boolean; promotedId?: string; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    // Local fallback: flip status and promote next waitlist.
+    const all = storeLoadParticipants();
+    const idx = all.findIndex((p) => p.id === participantId);
+    if (idx === -1) return { ok: false, error: "not_found" };
+    const wasActive = ["registered", "checked-in", "attended"].includes(all[idx].status);
+    all[idx] = { ...all[idx], status: "cancelled" };
+    let promotedId: string | undefined;
+    if (wasActive) {
+      const eventId = all[idx].eventId;
+      const waitlist = all
+        .filter((p) => p.eventId === eventId && p.status === "waitlisted")
+        .sort((a, b) => (a.waitlistPosition ?? 0) - (b.waitlistPosition ?? 0));
+      const next = waitlist[0];
+      if (next) {
+        const ni = all.findIndex((p) => p.id === next.id);
+        all[ni] = { ...all[ni], status: "registered", waitlistPosition: undefined };
+        promotedId = next.id;
+      }
+    }
+    storeSaveParticipants(all);
+    return { ok: true, promotedId };
+  }
+  const { data, error } = await supabase.rpc("cancel_registration", { p_participant_id: participantId });
+  if (error) return { ok: false, error: error.message };
+  const r = data as { ok: boolean; promoted_id?: string; error?: string };
+  return { ok: r.ok, promotedId: r.promoted_id, error: r.error };
+}
+
+// ── FEEDBACK ────────────────────────────────────────────────────────
+function rowToFeedback(row: Record<string, unknown>): UnioFeedback {
+  return {
+    id:        row.id as string,
+    eventId:   row.event_id as string,
+    name:      (row.name as string) ?? "Anonymous",
+    email:     (row.email as string | null) ?? undefined,
+    rating:    row.rating as number,
+    comment:   (row.comment as string) ?? "",
+    createdAt: row.created_at as string,
+  };
+}
+
+export async function submitFeedback(input: {
+  eventId: string;
+  name: string;
+  email: string;
+  rating: number;
+  comment: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    addFeedbackLocal({
+      id: crypto.randomUUID(),
+      eventId: input.eventId,
+      name: input.name || "Anonymous",
+      email: input.email || undefined,
+      rating: input.rating,
+      comment: input.comment,
+      createdAt: new Date().toISOString(),
+    });
+    return { ok: true };
+  }
+  const { data, error } = await supabase.rpc("submit_feedback", {
+    p_event_id: input.eventId,
+    p_name: input.name,
+    p_email: input.email,
+    p_rating: input.rating,
+    p_comment: input.comment,
+  });
+  if (error) return { ok: false, error: error.message };
+  const r = data as { ok: boolean; error?: string };
+  return r;
+}
+
+export async function loadFeedback(eventId: string): Promise<UnioFeedback[]> {
+  if (!isSupabaseConfigured()) return storeLoadFeedback(eventId);
+  const { data, error } = await supabase
+    .from("event_feedback")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.warn("loadFeedback:", error.message);
+    return storeLoadFeedback(eventId);
+  }
+  return (data ?? []).map(rowToFeedback);
+}
+
+// ── CERTIFICATES ISSUED ─────────────────────────────────────────────
+function rowToCertificate(row: Record<string, unknown>): UnioCertificate {
+  return {
+    id:                row.id as string,
+    eventId:           row.event_id as string,
+    participantId:     row.participant_id as string,
+    participantName:   row.participant_name as string,
+    participantEmail:  row.participant_email as string,
+    issuedAt:          row.issued_at as string,
+  };
+}
+
+export async function issueCertificates(eventId: string): Promise<{ ok: boolean; issued?: number; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    const all = storeLoadParticipants().filter(
+      (p) => p.eventId === eventId && (p.status === "checked-in" || p.status === "attended")
+    );
+    const existing = storeLoadCertificates(eventId);
+    const existingSet = new Set(existing.map((c) => c.participantId));
+    const fresh: UnioCertificate[] = all
+      .filter((p) => !existingSet.has(p.id))
+      .map((p) => ({
+        id: crypto.randomUUID(),
+        eventId,
+        participantId: p.id,
+        participantName: p.name,
+        participantEmail: p.email,
+        issuedAt: new Date().toISOString(),
+      }));
+    storeSaveCertificates([...storeLoadCertificates(), ...fresh]);
+    return { ok: true, issued: fresh.length };
+  }
+  const { data, error } = await supabase.rpc("issue_certificates", { p_event_id: eventId });
+  if (error) return { ok: false, error: error.message };
+  const r = data as { ok: boolean; issued?: number; error?: string };
+  return r;
+}
+
+export async function loadIssuedCertificates(eventId: string): Promise<UnioCertificate[]> {
+  if (!isSupabaseConfigured()) return storeLoadCertificates(eventId);
+  const { data, error } = await supabase
+    .from("certificates_issued")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("issued_at", { ascending: false });
+  if (error) {
+    console.warn("loadIssuedCertificates:", error.message);
+    return storeLoadCertificates(eventId);
+  }
+  return (data ?? []).map(rowToCertificate);
+}
+
+// ── BROADCAST ───────────────────────────────────────────────────────
+/**
+ * Posts to the local broadcast API route. Caller supplies the recipient
+ * list (RLS-bounded fetch is done on the client; server doesn't need a
+ * service-role key).
+ */
+export async function broadcastToParticipants(input: {
+  eventId: string;
+  subject: string;
+  message: string;
+  recipients: string[];
+}): Promise<{ ok: boolean; sent?: number; mode?: "resend" | "noop"; error?: string }> {
+  try {
+    const res = await fetch(`/api/events/${encodeURIComponent(input.eventId)}/broadcast`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        subject: input.subject,
+        message: input.message,
+        recipients: input.recipients,
+      }),
+    });
+    const j = await res.json();
+    if (!res.ok) return { ok: false, error: j?.error ?? "broadcast_failed" };
+    return j;
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "broadcast_error" };
+  }
 }

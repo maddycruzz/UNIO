@@ -31,7 +31,11 @@ export type PermissionAction =
   | "announcements.delete_own"
   | "comments.create"
   | "comments.delete_own"
-  | "notifications.view_own";
+  | "notifications.view_own"
+  | "events.toggle_public"
+  | "events.broadcast"
+  | "feedback.view"
+  | "certificates.issue_bulk";
 
 /**
  * The SINGLE SOURCE OF TRUTH for UI-level permissions.
@@ -66,6 +70,10 @@ export const PERMISSIONS: Record<PermissionAction, Role[]> = {
   "comments.create": ["developer", "president", "mate"],
   "comments.delete_own": ["developer", "president", "mate"],
   "notifications.view_own": ["developer", "president", "mate"],
+  "events.toggle_public": ["developer", "president"],
+  "events.broadcast": ["developer", "president"],
+  "feedback.view": ["developer", "president", "mate"],
+  "certificates.issue_bulk": ["developer", "president"],
 };
 
 /**
