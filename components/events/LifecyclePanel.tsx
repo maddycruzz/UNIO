@@ -5,7 +5,6 @@ import { Globe2, Link2, Copy, Check, Megaphone, Award, MessageSquare, Star, Load
 import {
   getEventById,
   updateEvent,
-  getParticipantsForEvent,
   broadcastToParticipants,
   issueCertificates,
   loadIssuedCertificates,
@@ -87,26 +86,17 @@ export function LifecyclePanel({ eventId }: Props) {
     e.preventDefault();
     setBusyKey("broadcast");
     setBcResult(null);
-    const ps = await getParticipantsForEvent(eventId);
-    const recipients = Array.from(new Set(
-      ps
-        .filter((p) => p.status !== "cancelled" && p.email)
-        .map((p) => p.email)
-    ));
-    if (recipients.length === 0) {
-      setBcResult("No participants to email yet.");
-      setBusyKey(null);
-      return;
-    }
     const res = await broadcastToParticipants({
       eventId,
       subject: bcSubject,
       message: bcMessage,
-      recipients,
     });
     setBusyKey(null);
     if (!res.ok) {
-      setBcResult(`Failed: ${res.error}`);
+      const msg = res.error === "no_recipients"
+        ? "No participants to email yet."
+        : `Failed: ${res.error}`;
+      setBcResult(msg);
       return;
     }
     if (res.mode === "noop") {

@@ -1,88 +1,119 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useCallback } from "react";
 import { acceptTeamInvite } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
 
+const PENDING_TOKEN_KEY = "pending_invite_token";
+
 function AcceptInviteInner() {
   const searchParams = useSearchParams();
-  const token = searchParams.get("token");
+  const urlToken = searchParams.get("token");
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  
-  const [status, setStatus] = useState<"loading" | "error" | "success" | "idle">("idle");
+
+  const [token, setToken] = useState<string | null>(urlToken);
+  const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
-  const handleAccept = async () => {
+  // If the user landed here without a ?token=, try the one stashed before login.
+  useEffect(() => {
+    if (urlToken) return;
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem(PENDING_TOKEN_KEY);
+    if (stored) setToken(stored);
+  }, [urlToken]);
+
+  const handleAccept = useCallback(async () => {
     if (!token) return;
     setStatus("loading");
     try {
       const res = await acceptTeamInvite(token);
       if (res.success) {
+        if (typeof window !== "undefined") localStorage.removeItem(PENDING_TOKEN_KEY);
         setStatus("success");
-        setTimeout(() => {
-          // Force a full reload to get the new role and JWT
-          window.location.href = "/dashboard";
-        }, 1500);
+        setTimeout(() => { window.location.href = "/dashboard"; }, 1200);
       } else {
         if (res.error === "not_logged_in") {
-          // Store token in localStorage and redirect to login
-          localStorage.setItem("pending_invite_token", token);
+          if (typeof window !== "undefined") localStorage.setItem(PENDING_TOKEN_KEY, token);
           router.push("/login?returnTo=/auth/accept-invite");
         } else {
           setStatus("error");
           setErrorMsg(res.error || "Failed to accept invite");
         }
       }
-    } catch (e: any) {
+    } catch (e) {
       setStatus("error");
-      setErrorMsg(e.message);
+      setErrorMsg(e instanceof Error ? e.message : "Failed to accept invite");
     }
-  };
+  }, [token, router]);
+
+  // Auto-accept once we have both a token and an authenticated user.
+  // This is what makes the post-login round-trip seamless.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    if (!token) return;
+    if (status !== "idle") return;
+    handleAccept();
+  }, [authLoading, user, token, status, handleAccept]);
 
   if (authLoading) return null;
 
   if (!token) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0F1117] text-white">
-        <div className="text-center p-8 bg-white/5 rounded-2xl border border-white/10">
-          <h1 className="text-xl font-bold text-red-400">Invalid Link</h1>
-          <p className="mt-2 text-slate-400">No invitation token was provided.</p>
+        <div className="max-w-sm w-full text-center p-8 rounded-2xl border border-white/10 bg-white/[0.03]">
+          <h1 className="text-xl font-semibold text-red-300">Invalid invite link</h1>
+          <p className="mt-2 text-sm text-slate-400">No invitation token was provided.</p>
+          <button onClick={() => router.replace("/login")} className="mt-5 w-full rounded-lg bg-[#6366F1] py-2 text-sm font-semibold text-white hover:bg-[#5558e0] transition-colors">
+            Go to sign in
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0F1117] text-white">
-      <div className="text-center p-8 bg-white/5 rounded-2xl border border-white/10 max-w-sm w-full shadow-2xl">
-        <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-6">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+    <div className="flex min-h-screen items-center justify-center bg-[#0F1117] text-white px-4">
+      <div className="max-w-sm w-full text-center p-8 rounded-2xl border border-white/10 bg-white/[0.03]">
+        <div className="w-14 h-14 bg-indigo-500/15 text-indigo-300 rounded-full flex items-center justify-center mx-auto mb-5">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
         </div>
-        <h1 className="text-2xl font-bold mb-2">You&apos;ve been invited!</h1>
-        <p className="text-slate-400 text-sm mb-8">Join the workspace to manage events and check-ins as a Club Mate.</p>
-        
+        <h1 className="text-xl font-semibold mb-1">You&apos;ve been invited</h1>
+        <p className="text-slate-400 text-sm mb-6">Join the workspace as a Club Mate.</p>
+
         {status === "error" && (
-          <div className="mb-6 p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-lg">
+          <div className="mb-5 p-3 rounded-lg border border-red-500/25 bg-red-500/5 text-sm text-red-300 text-left">
             {errorMsg}
           </div>
         )}
-        
+
         {status === "success" && (
-          <div className="mb-6 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm rounded-lg flex items-center justify-center gap-2">
+          <div className="mb-5 p-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 text-sm text-emerald-300 flex items-center justify-center gap-2">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-            Welcome aboard! Redirecting...
+            Welcome aboard — redirecting…
           </div>
         )}
-        
-        <button 
-          onClick={handleAccept}
-          disabled={status === "loading" || status === "success"}
-          className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-bold transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)]"
-        >
-          {status === "loading" ? "Accepting..." : "Accept Invitation"}
-        </button>
+
+        {!user ? (
+          <button
+            onClick={handleAccept}
+            disabled={status === "loading"}
+            className="w-full py-3 px-4 rounded-lg bg-[#6366F1] hover:bg-[#5558e0] disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+          >
+            {status === "loading" ? "Continuing…" : "Sign in to accept"}
+          </button>
+        ) : (
+          <button
+            onClick={handleAccept}
+            disabled={status === "loading" || status === "success"}
+            className="w-full py-3 px-4 rounded-lg bg-[#6366F1] hover:bg-[#5558e0] disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+          >
+            {status === "loading" ? "Accepting…" : status === "success" ? "Accepted" : "Accept invitation"}
+          </button>
+        )}
       </div>
     </div>
   );

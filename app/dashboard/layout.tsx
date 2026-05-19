@@ -129,7 +129,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   transition: "background 0.2s,border-color 0.2s",
                 }}
               >
-                {isActive && <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3, borderRadius: 2, background: item.accent, boxShadow: `0 0 8px ${item.accent}` }} />}
+                {isActive && <div style={{ position: "absolute", left: 0, top: "22%", bottom: "22%", width: 2, borderRadius: 2, background: item.accent }} />}
                 <div style={{ width: 34, height: 34, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: isActive ? item.accent : isHov ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.35)", background: isActive ? `${item.accent}18` : isHov ? "rgba(255,255,255,0.06)" : "transparent", transition: "all 0.2s" }}>
                   {item.icon}
                 </div>
@@ -147,15 +147,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const SidebarInner = ({ mini = false, onClose }: { mini?: boolean; onClose?: () => void }) => (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative", overflow: "hidden" }}>
-      {/* top glow */}
-      <div style={{ position: "absolute", top: 0, left: "20%", right: "20%", height: 1, background: "linear-gradient(90deg,transparent,rgba(99,102,241,0.6),transparent)" }} />
 
       {/* Logo row */}
       <div style={{ padding: mini ? "20px 0" : "20px", display: "flex", alignItems: "center", justifyContent: mini ? "center" : "space-between", borderBottom: "1px solid rgba(255,255,255,0.04)", minHeight: 64, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div
             onClick={mini ? () => setCollapsed(false) : undefined}
-            style={{ width: 32, height: 32, background: "linear-gradient(135deg,#6366F1,#818CF8)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "white", flexShrink: 0, boxShadow: "0 0 20px rgba(99,102,241,0.4)", cursor: mini ? "pointer" : "default" }}
+            style={{ width: 32, height: 32, background: "#6366F1", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "white", flexShrink: 0, cursor: mini ? "pointer" : "default" }}
             title={mini ? "Expand sidebar" : undefined}
           >U</div>
           {!mini && <div><div style={{ fontSize: 17, fontWeight: 700, color: "white", letterSpacing: "0.04em", lineHeight: 1 }}>UNIO</div><div style={{ fontSize: 9, color: "rgba(99,102,241,0.8)", letterSpacing: "0.15em", textTransform: "uppercase", marginTop: 2 }}>Campus Events</div></div>}
@@ -190,7 +188,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>Good {greeting}</div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{profileData.name}</div>
             </div>
-            <div style={{ marginLeft: "auto", width: 7, height: 7, borderRadius: "50%", background: "#10B981", boxShadow: "0 0 6px rgba(16,185,129,0.6)", flexShrink: 0 }} />
+            <div style={{ marginLeft: "auto", width: 7, height: 7, borderRadius: "50%", background: "#10B981", flexShrink: 0 }} />
           </div>
         </div>
       )}
@@ -287,7 +285,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-              <div style={{ width: 24, height: 24, background: "linear-gradient(135deg,#6366F1,#818CF8)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "white", flexShrink: 0 }}>U</div>
+              <div style={{ width: 24, height: 24, background: "#6366F1", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>U</div>
               <span style={{ fontSize: 15, fontWeight: 700, color: "white", letterSpacing: "0.04em" }}>UNIO</span>
             </div>
             {activeItem && (

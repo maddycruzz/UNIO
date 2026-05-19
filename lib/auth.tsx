@@ -29,6 +29,8 @@ interface AuthContextValue {
   loginWithGoogle: () => Promise<void>;
   loginAsDemo: () => void;
   logout: () => void;
+  sendPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 // ─── Storage key ────────────────────────────────────────────────
@@ -36,8 +38,10 @@ const SESSION_KEY = "unio_session_v1";
 
 // Unified timeout for any Supabase auth call. Cellular / cold-start
 // edge functions routinely take 2–5s; anything tighter silently
-// sabotages real users on flaky networks.
-const AUTH_TIMEOUT_MS = 10_000;
+// sabotages real users on flaky networks. 30s is a comfortable safety
+// net — Supabase's own HTTP timeout is ~30s, so this catches genuine
+// client-side deadlocks without false-positiving on slow networks.
+const AUTH_TIMEOUT_MS = 30_000;
 
 // ─── Demo users ─────────────────────────────────────────────────
 const DEMO_USERS: Record<string, AuthUser> = {
@@ -85,6 +89,9 @@ function saveSession(user: AuthUser): void {
 function clearSession(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem(SESSION_KEY);
+  // Bust any per-user caches keyed off the previous identity so the next
+  // login doesn't read the wrong club_id, etc.
+  localStorage.removeItem("unio_mate_club_v1");
 }
 
 /** Convert a Supabase user into our app's AuthUser shape */
@@ -113,8 +120,16 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from localStorage synchronously so the first paint isn't a blank
+  // spinner waiting for getSession(). The hydrate effect below still runs
+  // to validate the session against Supabase and refresh the role.
+  const [user, setUser] = useState<AuthUser | null>(() => loadSession());
+  const [loading, setLoading] = useState(() => {
+    // If we already have a cached user, render immediately and validate in
+    // the background. Otherwise show the spinner until hydrate resolves.
+    if (typeof window === "undefined") return true;
+    return !loadSession();
+  });
   const [isOffline, setIsOffline] = useState(false);
 
   // Hydrate session on mount — check Supabase first, fall back to localStorage
@@ -152,9 +167,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (cached && cached.id !== authUser.id) {
               // The local session belongs to an old demo user. Wipe it immediately!
               clearSession();
-              authUser.role = "president";
+              authUser.role = "mate";
             } else {
-              authUser.role = cached?.role || "president";
+              authUser.role = cached?.role || "mate";
             }
             saveSession(authUser);
             setUser(authUser);
@@ -202,18 +217,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Listen for Supabase auth state changes (e.g. after Google redirect)
+  // Listen for Supabase auth state changes (e.g. after Google redirect).
+  // Important: this handler must NOT block on the profile fetch — if Supabase
+  // is slow or the profile row isn't created yet, the user would otherwise
+  // sit on a spinner for the full network timeout. Render immediately with
+  // the cached role, refresh the role in the background.
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         if (session?.user) {
           const authUser = supabaseUserToAuthUser(session.user);
-          const { data: profile } = await supabase.from("profiles").select("role").eq("id", authUser.id).single();
-          authUser.role = profile?.role || "president";
+          const cached = loadSession();
+          authUser.role = cached?.id === authUser.id ? (cached.role ?? "mate") : "mate";
           saveSession(authUser);
           setUser(authUser);
+
+          // Background role refresh — fire and forget.
+          supabase.from("profiles").select("role").eq("id", authUser.id).single()
+            .then(({ data: profile }) => {
+              if (!profile?.role || profile.role === authUser.role) return;
+              const updated = { ...authUser, role: profile.role };
+              saveSession(updated);
+              setUser(updated);
+            })
+            .then(undefined, () => { /* network blip — keep cached role */ });
         } else {
           clearSession();
           setUser(null);
@@ -241,7 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ── Real Supabase auth ──
       if (isSupabaseConfigured() && !isOffline) {
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Supabase is offline")), AUTH_TIMEOUT_MS)
+          setTimeout(() => reject(new Error("auth_timeout")), AUTH_TIMEOUT_MS)
         );
 
         try {
@@ -253,16 +282,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (error) return { success: false, error: error.message };
           if (data.user) {
             const authUser = supabaseUserToAuthUser(data.user);
-            const { data: profile } = await supabase.from("profiles").select("role").eq("id", authUser.id).single();
-            authUser.role = profile?.role || "president";
+            // Render immediately with cached role (if any). Refresh in background.
+            const cached = loadSession();
+            authUser.role = cached?.id === authUser.id ? (cached.role ?? "mate") : "mate";
             saveSession(authUser);
             setUser(authUser);
-            // Reset offline flag — we just succeeded against the network.
             setIsOffline(false);
+
+            supabase.from("profiles").select("role").eq("id", authUser.id).single()
+              .then(({ data: profile }) => {
+                if (!profile?.role || profile.role === authUser.role) return;
+                const updated = { ...authUser, role: profile.role };
+                saveSession(updated);
+                setUser(updated);
+              })
+              .then(undefined, () => { /* fine — keep cached role */ });
+
             return { success: true };
           }
           return { success: false, error: "Sign-in failed. Please try again." };
         } catch (e) {
+          const msg = e instanceof Error ? e.message : "";
+          if (msg === "auth_timeout") {
+            return { success: false, error: "Sign-in is taking longer than usual. Check your connection and retry." };
+          }
           console.error("Login network error:", e);
           return { success: false, error: "Network error during sign-in." };
         }
@@ -299,8 +342,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return { success: true, error: "check-email" }; // special flag for UI
           }
           const authUser = supabaseUserToAuthUser(data.user);
-          const { data: profile } = await supabase.from("profiles").select("role").eq("id", authUser.id).single();
-          authUser.role = profile?.role || "president";
+          // New signup → no cached role; default to mate. The handle_new_user
+          // trigger will create the profile row; we don't block on reading it.
+          authUser.role = "mate";
           saveSession(authUser);
           setUser(authUser);
           setIsOffline(false);
@@ -308,6 +352,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return { success: false, error: "Sign-up failed. Please try again." };
       } catch (e) {
+        const msg = e instanceof Error ? e.message : "";
+        if (msg === "auth_timeout") {
+          return { success: false, error: "Sign-up is taking longer than usual. Check your connection and retry." };
+        }
         console.error("Signup network error:", e);
         return { success: false, error: "Network error during sign-up." };
       }
@@ -338,21 +386,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const loginAsDemo = useCallback(async () => {
+    // Demo is always local-only. Never try a real Supabase login with seeded
+    // credentials — if they happen to exist in a prod project, anyone who
+    // clicks "Demo" would be signed into a real account.
     if (isSupabaseConfigured()) {
-      const result = await login("ayaan@college.edu", "password123");
-      if (result.success) {
-        router.push("/dashboard");
-        return;
-      }
-      // If Supabase login failed (no seeded demo account, network down, etc.)
-      // fall through to the localStorage demo path instead of dead-ending.
+      // If a real Supabase session exists, sign it out first so demo and
+      // real-auth state can't get tangled.
+      try { await supabase.auth.signOut(); } catch { /* network or no session — both fine */ }
     }
-    // No Supabase backend (or login failed): drop the seeded president into
-    // localStorage so the demo still works end-to-end against `lib/store.ts`.
     saveSession(DEFAULT_DEMO_USER);
     setUser(DEFAULT_DEMO_USER);
     router.push("/dashboard");
-  }, [router, login]);
+  }, [router]);
+
+  const sendPasswordReset = useCallback(async (email: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured()) {
+      return { success: false, error: "Supabase is not configured." };
+    }
+    if (!email) return { success: false, error: "Please enter your email." };
+    try {
+      const redirectTo = `${window.location.origin}/auth/reset-password`;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : "Reset failed." };
+    }
+  }, []);
+
+  const updatePassword = useCallback(async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured()) {
+      return { success: false, error: "Supabase is not configured." };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters." };
+    }
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : "Update failed." };
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     if (isSupabaseConfigured() && !isOffline) {
@@ -369,7 +445,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router, isOffline]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, loginWithGoogle, loginAsDemo, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, loginWithGoogle, loginAsDemo, logout, sendPasswordReset, updatePassword }}>
       {children}
     </AuthContext.Provider>
   );

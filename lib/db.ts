@@ -143,42 +143,24 @@ function readJwtUserIdFromStorage(): string | null {
   return null;
 }
 
+// Mate club_id cache — saves a round-trip on every mate write.
+const MATE_CLUB_KEY = "unio_mate_club_v1";
+
 /** Get the currently authenticated user's context (role and active club).
- *  Tries the live Supabase session first (short-timed) and falls back to
- *  reading the JWT directly from localStorage if getSession() hangs. */
+ *  localStorage-first: the JWT and role are already cached, so this is
+ *  synchronous-fast on the happy path. Only mates without a cached club_id
+ *  fall through to a network read. */
 export async function getUserContext(): Promise<UserContext | null> {
   if (!isSupabaseConfigured()) return null;
 
-  // Step 1: race getSession() against a 3s timeout. On the happy path this
-  // returns instantly from in-memory state; on a hung token-refresh it bails out.
-  // 1.5s was too tight — cold-start tabs legitimately exceed it.
-  let userId: string | null = null;
-  try {
-    const sessionPromise = supabase.auth.getSession();
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("getSession soft-timeout")), 3000)
-    );
-    const { data } = (await Promise.race([sessionPromise, timeoutPromise])) as Awaited<ReturnType<typeof supabase.auth.getSession>>;
-    userId = data?.session?.user?.id ?? null;
-  } catch {
-    /* fall through to storage read */
-  }
+  // The JWT user-id lives in localStorage already (Supabase writes it after
+  // login). Reading directly avoids the multi-second deadlocks getSession()
+  // sometimes hits under concurrent auth-state refreshes.
+  const userId = readJwtUserIdFromStorage();
+  if (!userId || !UUID_RE.test(userId)) return null;
 
-  // Step 2: fallback — read user id directly from the JWT in localStorage.
-  if (!userId) {
-    userId = readJwtUserIdFromStorage();
-  }
-
-  if (!userId) return null;
-  if (!UUID_RE.test(userId)) {
-    // Demo/local IDs like "u-ayaan" reach here in offline mode — that's expected,
-    // not an error; just refuse to use them for organizer_id writes.
-    return null;
-  }
-
-  // Read role from localStorage cache first (set during login/hydrate) — avoids
-  // a network roundtrip on every write. Falls back to a DB lookup if missing.
-  let role: UserRole = "president";
+  // Role cache populated during login/hydrate.
+  let role: UserRole = "mate";
   if (typeof window !== "undefined") {
     try {
       const raw = localStorage.getItem("unio_session_v1");
@@ -188,14 +170,28 @@ export async function getUserContext(): Promise<UserContext | null> {
           role = cached.role;
         }
       }
-    } catch {
-      /* fall through to DB lookup */
-    }
+    } catch { /* keep default */ }
   }
 
   if (role === "mate") {
+    // Cached club_id for mates so we skip the round-trip on writes.
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(MATE_CLUB_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.userId === userId && typeof parsed.clubId === "string") {
+            return { userId, role, activeClubId: parsed.clubId };
+          }
+        }
+      } catch { /* fall through to network */ }
+    }
     const { data: membership } = await supabase.from("club_members").select("club_id").eq("user_id", userId).single();
-    return { userId, role, activeClubId: membership?.club_id || userId };
+    const activeClubId = membership?.club_id || userId;
+    if (typeof window !== "undefined") {
+      try { localStorage.setItem(MATE_CLUB_KEY, JSON.stringify({ userId, clubId: activeClubId })); } catch { /* quota */ }
+    }
+    return { userId, role, activeClubId };
   }
 
   return { userId, role, activeClubId: userId };
@@ -700,17 +696,19 @@ export async function loadActivity(): Promise<ActivityItem[]> {
 
 export async function getDashboardStats() {
   if (!isSupabaseConfigured()) return storeGetDashboardStats();
-  const [events, tasks, participants, meetings] = await Promise.all([
-    loadEvents(),
-    loadTasks(),
-    loadParticipants(),
-    loadMeetings(),
+  // HEAD count queries — Supabase returns just a count, no rows transferred.
+  // Same RLS protection, but ~50x less data than loading the full tables.
+  const [eventsRes, tasksRes, partsRes, meetingsRes] = await Promise.all([
+    supabase.from("events").select("*", { count: "exact", head: true }).is("deleted_at", null),
+    supabase.from("tasks").select("*", { count: "exact", head: true }).is("deleted_at", null).neq("status", "done"),
+    supabase.from("participants").select("*", { count: "exact", head: true }).is("deleted_at", null),
+    supabase.from("meetings").select("*", { count: "exact", head: true }).is("deleted_at", null).eq("status", "upcoming"),
   ]);
   return {
-    totalEvents:      events.length,
-    activeTasks:      tasks.filter(t => t.status !== "done").length,
-    totalParticipants: participants.length,
-    upcomingMeetings: meetings.filter(m => m.status === "upcoming").length,
+    totalEvents:       eventsRes.count   ?? 0,
+    activeTasks:       tasksRes.count    ?? 0,
+    totalParticipants: partsRes.count    ?? 0,
+    upcomingMeetings:  meetingsRes.count ?? 0,
   };
 }
 
@@ -1541,15 +1539,14 @@ export async function loadIssuedCertificates(eventId: string): Promise<UnioCerti
 
 // ── BROADCAST ───────────────────────────────────────────────────────
 /**
- * Posts to the local broadcast API route. Caller supplies the recipient
- * list (RLS-bounded fetch is done on the client; server doesn't need a
- * service-role key).
+ * Posts to the local broadcast API route. The route authenticates the
+ * caller and pulls participants server-side via the caller's RLS session,
+ * so clients cannot inject recipient addresses.
  */
 export async function broadcastToParticipants(input: {
   eventId: string;
   subject: string;
   message: string;
-  recipients: string[];
 }): Promise<{ ok: boolean; sent?: number; mode?: "resend" | "noop"; error?: string }> {
   try {
     const res = await fetch(`/api/events/${encodeURIComponent(input.eventId)}/broadcast`, {
@@ -1558,7 +1555,6 @@ export async function broadcastToParticipants(input: {
       body: JSON.stringify({
         subject: input.subject,
         message: input.message,
-        recipients: input.recipients,
       }),
     });
     const j = await res.json();

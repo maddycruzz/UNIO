@@ -532,9 +532,9 @@ export default function DashboardHome() {
               <motion.button
                 key={action.label}
                 layout
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.98 }}
-                className="group relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.02] p-4 text-left shadow-[0_20px_55px_rgba(15,17,23,0.95)] backdrop-blur-sm"
+                whileHover={{ y: -2 }}
+                transition={{ duration: 0.15 }}
+                className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-left shadow-[0_12px_32px_rgba(0,0,0,0.4)] backdrop-blur-sm"
                 type="button"
                 onClick={() => router.push(action.href)}
               >
@@ -954,28 +954,24 @@ export default function DashboardHome() {
                 transition={{ delay: 0.9, duration: 0.45 }}
                 className="mt-5 flex flex-wrap items-center gap-3"
               >
-                <motion.button
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.98 }}
+                <button
                   type="button"
-                  className="inline-flex items-center justify-center rounded-full bg-indigo px-6 py-2.5 text-sm font-semibold text-white shadow-[0_18px_50px_rgba(79,70,229,0.8)] ring-1 ring-indigo/60"
+                  className="inline-flex items-center justify-center rounded-lg bg-indigo px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo/90"
                 >
                   <Sparkles className="mr-2 h-4 w-4 text-white" />
                   Go to today&apos;s events
-                </motion.button>
+                </button>
 
-                <motion.button
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.98 }}
+                <button
                   type="button"
-                  className="group inline-flex items-center justify-center rounded-full border border-white/40 bg-black/20 px-5 py-2.5 text-sm font-medium text-slate-100/90 backdrop-blur"
+                  className="group inline-flex items-center justify-center rounded-lg border border-white/15 bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-slate-100/90 transition-colors hover:bg-white/[0.06]"
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <Wand2 className="h-4 w-4 text-emerald" />
                     Quick actions
                     <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
                   </span>
-                </motion.button>
+                </button>
               </motion.div>
             </div>
 

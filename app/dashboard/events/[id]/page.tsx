@@ -458,23 +458,24 @@ export default function EventDetailPage() {
   const [extraDivisions, setExtraDivisions]   = useState<string[]>([]);
 
   useEffect(() => {
+    if (!eventId) return;
+    let cancelled = false;
     const fetchData = async () => {
-      const fetchedTasks = await loadTasks();
+      // Parallel — the detail page used to serialize these for no reason,
+      // which doubled the perceived load time on first click.
+      const [fetchedTasks, fetchedEvent] = await Promise.all([
+        loadTasks(),
+        getEventById(eventId),
+      ]);
+      if (cancelled) return;
       setAllTasks(fetchedTasks);
-      
-      if (eventId) {
-        const fetchedEvent = await getEventById(eventId);
-        if (fetchedEvent) {
-          setEvent({
-            ...fetchedEvent,
-            type: fetchedEvent.type || "Other",
-          });
-        }
+      if (fetchedEvent) {
+        setEvent({ ...fetchedEvent, type: fetchedEvent.type || "Other" });
       }
     };
     fetchData();
     window.addEventListener("unio-store-change", fetchData);
-    return () => window.removeEventListener("unio-store-change", fetchData);
+    return () => { cancelled = true; window.removeEventListener("unio-store-change", fetchData); };
   }, [eventId]);
 
   // Tasks for this event, sorted by stored `order` (stable for unset).

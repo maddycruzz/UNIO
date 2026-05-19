@@ -46,22 +46,22 @@ export default function UnioLandingPage() {
   const smoothProgress = useSpring(scrollYProgress, { stiffness: 100, damping: 30 });
 
   return (
-    <div style={{ backgroundColor: '#0F1117', color: '#ffffff', minHeight: '100vh', overflowX: 'hidden', fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
+    <div style={{ backgroundColor: '#0F1117', color: '#ffffff', minHeight: '100vh', overflowX: 'hidden', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <motion.div style={{ scaleX: smoothProgress, position: 'fixed', top: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(to right, #6366F1, #10B981)', transformOrigin: 'left', zIndex: 100 }} />
 
       <nav style={{ position: 'fixed', top: 0, width: '100%', zIndex: 50, backdropFilter: 'blur(20px)', backgroundColor: 'rgba(15,17,23,0.85)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 32px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 32, height: 32, backgroundColor: '#6366F1', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 16px rgba(99,102,241,0.5)' }}>
-              <span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>U</span>
+            <div style={{ width: 30, height: 30, backgroundColor: '#6366F1', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ color: '#fff', fontWeight: 700, fontSize: 13 }}>U</span>
             </div>
-            <span style={{ fontWeight: 700, color: '#ffffff', letterSpacing: '-0.02em' }}>
-              UNIO <span style={{ color: 'rgba(255,255,255,0.3)', fontWeight: 400 }}>Campus</span>
+            <span style={{ fontWeight: 600, color: '#ffffff', letterSpacing: '-0.02em', fontSize: 15 }}>
+              UNIO <span style={{ color: 'rgba(255,255,255,0.35)', fontWeight: 400 }}>Campus</span>
             </span>
           </div>
           <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
-            <Link href="/login" style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, fontWeight: 600, textDecoration: 'none', letterSpacing: '-0.01em' }}>Login</Link>
-            <Link href="/login#signup" style={{ backgroundColor: '#6366F1', color: '#fff', padding: '8px 20px', borderRadius: 999, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', boxShadow: '0 4px 20px rgba(99,102,241,0.35)', textDecoration: 'none', display: 'inline-block' }}>Get started →</Link>
+            <Link href="/login" style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 500, textDecoration: 'none', letterSpacing: '-0.01em' }}>Log in</Link>
+            <Link href="/login#signup" style={{ backgroundColor: '#6366F1', color: '#fff', padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block', letterSpacing: '-0.01em', transition: 'background 0.15s' }}>Get started</Link>
           </div>
         </div>
       </nav>
@@ -83,7 +83,13 @@ export default function UnioLandingPage() {
 function WordCycleSection() {
   const containerRef = useRef<HTMLDivElement>(null);
   const totalWords = CYCLE_WORDS.length; // 8
-  const wordFraction = totalWords / (totalWords + 1); // 8/9
+  // Pace: how many words advance per one viewport-height of scroll.
+  // Higher = faster cycle (1.0 was the original, sluggish feel).
+  const WORDS_PER_VIEWPORT = 1.7;
+  const wordZoneVh = (totalWords / WORDS_PER_VIEWPORT) * 100; // ≈ 470vh for 8 words
+  const unioZoneVh = 100;                                      // last viewport = UNIO zoom-out
+  const totalSectionVh = wordZoneVh + unioZoneVh;
+  const wordFraction = wordZoneVh / totalSectionVh;
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [isPastSection, setIsPastSection] = useState(false);
@@ -138,7 +144,7 @@ function WordCycleSection() {
   const overlayVisible = !isBeforeSection && !isPastSection;
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', height: `${(totalWords + 1) * 100}vh`, backgroundColor: '#0F1117' }}>
+    <div ref={containerRef} style={{ position: 'relative', height: `${totalSectionVh}vh`, backgroundColor: '#0F1117' }}>
       <div style={{
         position: 'fixed', top: 0, left: 0, right: 0, height: '100vh',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -185,7 +191,7 @@ function WordCycleSection() {
                 initial={{ y: '110%', opacity: 0 }}
                 animate={{ y: '0%', opacity: 1 }}
                 exit={{ y: '-110%', opacity: 0 }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
                 style={{ color: CYCLE_WORDS[activeIdx].color, display: 'block' }}
               >
                 {CYCLE_WORDS[activeIdx].word}
@@ -197,7 +203,7 @@ function WordCycleSection() {
                 initial={{ y: '110%', opacity: 0 }}
                 animate={{ y: '0%', opacity: 1 }}
                 exit={{ y: '-110%', opacity: 0 }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -536,11 +542,11 @@ function FinalCTA() {
             </h2>
             <p style={{fontSize:16,color:'rgba(255,255,255,0.5)',maxWidth:480,margin:'0 auto 40px'}}>Join hundreds of campus clubs already using UNIO to run better events.</p>
             <div style={{display:'flex',flexWrap:'wrap',justifyContent:'center',gap:16}}>
-              <Link href="/login" style={{display:'flex',alignItems:'center',gap:8,backgroundColor:'#6366F1',color:'#ffffff',padding:'14px 32px',borderRadius:999,fontSize:15,fontWeight:700,border:'none',cursor:'pointer',boxShadow:'0 8px 32px rgba(99,102,241,0.35)',textDecoration:'none'}}>
-                Sign Up Free <ArrowRight size={16}/>
+              <Link href="/login" style={{display:'inline-flex',alignItems:'center',gap:8,backgroundColor:'#6366F1',color:'#ffffff',padding:'13px 28px',borderRadius:10,fontSize:14,fontWeight:600,border:'none',cursor:'pointer',textDecoration:'none',letterSpacing:'-0.01em',transition:'background 0.15s'}}>
+                Get started <ArrowRight size={15}/>
               </Link>
-              <Link href="/login" style={{backgroundColor:'rgba(255,255,255,0.06)',color:'#ffffff',padding:'14px 32px',borderRadius:999,fontSize:15,fontWeight:700,border:'1px solid rgba(255,255,255,0.12)',cursor:'pointer',textDecoration:'none'}}>
-                Log In
+              <Link href="/login" style={{backgroundColor:'rgba(255,255,255,0.05)',color:'#ffffff',padding:'13px 28px',borderRadius:10,fontSize:14,fontWeight:600,border:'1px solid rgba(255,255,255,0.1)',cursor:'pointer',textDecoration:'none',letterSpacing:'-0.01em',transition:'background 0.15s'}}>
+                Log in
               </Link>
             </div>
           </div>

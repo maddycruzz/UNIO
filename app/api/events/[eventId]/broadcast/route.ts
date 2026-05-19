@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
+import { requirePermission } from "@/lib/server/require-permission";
 
 /**
  * POST /api/events/:eventId/broadcast
- * Body: { subject: string; message: string; recipients?: string[] }
+ * Body: { subject: string; message: string }
+ *
+ * Requires the caller to be authenticated and hold the `events.broadcast`
+ * permission. Recipients are fetched server-side via the caller's
+ * RLS-bounded Supabase session — clients cannot inject arbitrary addresses.
  *
  * If RESEND_API_KEY is set, fans the message out via Resend.
  * Otherwise returns a noop response with the count it *would* have sent —
  * useful for local demos.
- *
- * NOTE: recipient list is provided by the caller (the dashboard page),
- * which already has RLS-bounded read access to participants. We don't
- * fetch them server-side here to avoid needing a service-role key.
  */
 export async function POST(
   req: Request,
@@ -18,7 +19,17 @@ export async function POST(
 ) {
   const { eventId } = await params;
 
-  let body: { subject?: string; message?: string; recipients?: string[] };
+  // ── AuthN + AuthZ. Throws on unauthorized; we catch and translate.
+  let supabase;
+  try {
+    ({ supabase } = await requirePermission("events.broadcast"));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "forbidden";
+    const status = msg.startsWith("Unauthorized") ? 401 : 403;
+    return NextResponse.json({ ok: false, error: msg }, { status });
+  }
+
+  let body: { subject?: string; message?: string };
   try {
     body = await req.json();
   } catch {
@@ -27,11 +38,31 @@ export async function POST(
 
   const subject = (body.subject ?? "").trim();
   const message = (body.message ?? "").trim();
-  const recipients = (body.recipients ?? []).filter((r) => typeof r === "string" && r.includes("@"));
-
   if (!subject || !message) {
     return NextResponse.json({ ok: false, error: "missing_subject_or_message" }, { status: 400 });
   }
+
+  // ── Pull recipients server-side. RLS scopes this to events the caller owns.
+  // If the caller doesn't own this event, they'll get an empty list, never
+  // someone else's participant emails.
+  const { data: ppl, error: pplErr } = await supabase
+    .from("participants")
+    .select("email,status")
+    .eq("event_id", eventId)
+    .neq("status", "cancelled");
+
+  if (pplErr) {
+    return NextResponse.json({ ok: false, error: `participants_query_failed: ${pplErr.message}` }, { status: 500 });
+  }
+
+  const recipients = Array.from(
+    new Set(
+      (ppl ?? [])
+        .map((p) => (typeof p.email === "string" ? p.email.trim() : ""))
+        .filter((e) => e.includes("@"))
+    )
+  );
+
   if (recipients.length === 0) {
     return NextResponse.json({ ok: false, error: "no_recipients" }, { status: 400 });
   }
