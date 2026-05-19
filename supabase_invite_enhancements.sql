@@ -14,9 +14,11 @@
 ALTER TABLE public.club_invitations
   ADD COLUMN IF NOT EXISTS invitee_name      TEXT,
   ADD COLUMN IF NOT EXISTS personal_message  TEXT,
-  -- invited_by may be missing on installs that only ran v2 (it was added in
-  -- v5). The RPC below joins profiles on it, so add it defensively here.
-  ADD COLUMN IF NOT EXISTS invited_by        UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+  -- The following two columns may be missing on installs that only ran v2
+  -- (both were added in v5). The RPC below and the accept_invitation function
+  -- both reference them, so add them defensively here.
+  ADD COLUMN IF NOT EXISTS invited_by        UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS accepted_by       UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 
 -- ── Public-readable preview RPC ─────────────────────────────────────
 -- The /auth/accept-invite landing page calls this to render the invite

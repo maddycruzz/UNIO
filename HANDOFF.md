@@ -1,93 +1,144 @@
 # UNIO — Session Handoff
 
-> **You are the next Claude. Read this once, then you're caught up. User is presenting tomorrow — treat everything as demo-critical.**
+> **You are the next Claude. Read this once, then you're caught up. App is now deployed to Vercel and the invite flow works end-to-end. Major sessions to date: auth+perf overhaul (2026-05-19), invite-feature buildout + production deploy (2026-05-20).**
 
 ## TL;DR
 
-UNIO is a campus event-management dashboard (Next.js 16 + Supabase). A previous session did a deep auth + perf + security overhaul. **Everything is committed as `3d417f7`. All three Supabase migrations (v6, v7, v8) have been applied to the live project.** Demo prep (Vercel deploy, seed data, rehearsal) is still pending.
+UNIO is a campus event-management dashboard (Next.js 16 + Supabase). It is **deployed live at https://unio-two.vercel.app**. Auth, dashboards, team invites with real Brevo SMTP email delivery, and invite acceptance all work end-to-end as of the verified test 2026-05-20.
+
+The last session built the real team-invite feature (modal form → DB → Brevo email → public accept landing) and deployed to Vercel. Three live URL-tied integrations (Supabase Auth allowed-URLs, Google OAuth origins, Vercel env vars) are all configured. Schema is on the v8 + invite-enhancements baseline.
 
 ---
 
 ## Project facts
 
 - **Working dir**: `/Users/bharath/projects/UNIO-main`
-- **Branch**: `main` (committed locally, **not pushed** to GitHub yet)
-- **Latest commit**: `3d417f7 feat: auth hardening, perf fixes, and demo-ready security cleanup`
+- **Branch**: `main` (pushed; auto-deploys to Vercel on push)
+- **Production URL**: `https://unio-two.vercel.app`
+- **Repo**: `github.com/maddycruzz/UNIO`
 - **Git user**: `maddycruzz` / `sarasubharath1897@gmail.com`
-- **Date this was last updated**: 2026-05-19 (evening before demo)
+- **Date this was last updated**: 2026-05-20
 - **User's plan**: Supabase Free tier
-- **App description**: campus event-management dashboard. RBAC roles `developer` > `president` > `mate`. Mostly client-side React (`"use client"`), one server route (`/api/events/[eventId]/broadcast`), one middleware (`middleware.ts`). Security boundary is Supabase RLS at the database.
+- **App description**: campus event-management dashboard. RBAC roles `developer` > `president` > `mate`. Mostly client-side React (`"use client"`), API routes at `/api/events/[eventId]/broadcast` and `/api/team/invite-email`, one proxy/middleware (`proxy.ts`). Security boundary is Supabase RLS at the database.
 
 ### Stack
 ```
-Next.js 16.1.6 (App Router)        next dev / next build
+Next.js 16.1.6 (App Router, Turbopack)         next dev / next build
 React 19.2.3
 Supabase (@supabase/ssr 0.10.3, @supabase/supabase-js 2.98.0)
+nodemailer 6.x (SMTP transport, added 2026-05-20)
 DM Sans, Tailwind 4, framer-motion, @dnd-kit, lucide-react
-ENV: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY (.env.local)
-     RESEND_API_KEY, RESEND_FROM_EMAIL (optional, for /api/events/.../broadcast)
+
+ENV (.env.local locally, Vercel Production+Preview in prod):
+  NEXT_PUBLIC_SUPABASE_URL
+  NEXT_PUBLIC_SUPABASE_ANON_KEY
+  SMTP_HOST=smtp-relay.brevo.com
+  SMTP_PORT=587
+  SMTP_USER (Brevo SMTP login, ends in @smtp-brevo.com)
+  SMTP_PASS (Brevo SMTP key, starts with xsmtpsib-)
+  MAIL_FROM=UNIO <verified-sender@email>
+  RESEND_API_KEY, RESEND_FROM_EMAIL (legacy, optional — SMTP takes priority)
 ```
 
 ---
 
 ## Status as of handoff
 
-### ✅ Done
-- v6 migration applied — `profiles.role` default flipped to `'mate'` (was `'president'`, every signup was admin)
-- v7 migration applied — `search_path` pinned on all `SECURITY DEFINER` functions; `event-files` storage bucket no longer leaks file listings
-- v8 migration applied — `REVOKE EXECUTE FROM PUBLIC` + selective `GRANT TO authenticated` on private RPCs (v7 only revoked from `anon`, which inherits `PUBLIC`, so it didn't work — v8 is the correct version)
-- Alt account that became president before v6 was manually demoted via `UPDATE`
-- Auth timeout error `"Supabase is offline"` fixed (was firing falsely at 10s)
-- All work committed (`3d417f7`)
-- This file (HANDOFF.md) created/updated
+### ✅ Live and verified working in production
+- **Vercel deploy live** at https://unio-two.vercel.app, auto-deploys from `main`
+- **Auth**: email/password + Google OAuth working on the production URL
+- **Invite flow E2E**: president invites by email → Brevo delivers branded HTML email → recipient clicks link → signs up → accepted into the club with the chosen role
+- **Schema**: all migrations applied — v6, v7, v8, and `supabase_invite_enhancements.sql`
+- **Brevo SMTP**: configured with two verified senders (`sarasubharath1897@gmail.com`, `unio.build@gmail.com`)
 
-### ❌ Pending — what the user needs before tomorrow
-1. **Push to GitHub** (`git push origin main`) — local commit only right now. Push enables Vercel git-deploy and serves as backup if the laptop dies tonight.
-2. **Deploy to Vercel** — projector + laptop wifi is the #1 demo killer. User wants this.
-3. **Seed demo data** — empty dashboards look unfinished. `supabase_seed_demo.sql` exists but **has not been audited against the v6/v7/v8 schema**. Read it first; don't run blind.
-4. **End-to-end rehearsal** — user should walk through the actual demo flow once.
-5. **Warm Supabase ~30s before presenting** — free tier hibernates after ~5 min idle. First query post-wake is 2–4s. Warm by visiting the app.
+### ✅ Done in the 2026-05-20 session
+- **Real invite feature** built end-to-end (see "Invite feature architecture" below)
+- **Brevo SMTP integration** with provider auto-selection (SMTP > Resend > noop fallback)
+- **Schema self-heal**: `supabase_invite_enhancements.sql` now defensively adds `invited_by`, `accepted_by`, `invitee_name`, `personal_message` so installs on the v2 baseline still work
+- **`get_invite_preview(token)`** RPC for pre-auth landing-page rendering
+- **Hydration fixes**: login page + dashboard layout mounted-gate pattern
+- **Performance fixes**: optimistic signout (was 5s blocking), tasks-page loading skeleton (was blank-on-first-load), announcement delete timeout
+- **UX primitives**: `components/ui/Toast.tsx` and `components/ui/ConfirmDialog.tsx`; all `alert()` and `confirm()` callsites replaced (15 + 5 sites across dashboard pages and event/cert sub-components)
+- **`middleware.ts` → `proxy.ts`** rename for Next 16 convention; now a no-op pass-through (the localStorage Supabase client isn't visible server-side, so server-side auth gating is pointless — RLS is the real boundary)
+- **Console noise reduced**: `loadAnnouncements` / `loadCommentsFor` transient network errors demoted from `error` to `warn`
+- **Vercel deploy** completed; env vars set on Production + Preview scopes
+- **Supabase Auth URL Configuration** updated for production URL (Site URL + Redirect URLs)
+- **Google Cloud OAuth** Authorized JavaScript origins updated with production URL
 
-### Final Supabase linter state (acceptable — don't waste time on these)
-- ✅ `function_search_path_mutable` → 0 (was 2)
-- ✅ `public_bucket_allows_listing` → 0 (was 1)
-- ✅ `anon_security_definer_function_executable` → **4 remaining, all intentional**: `get_public_event`, `register_for_event`, `submit_feedback`, `cancel_registration` (these power the unauthenticated public-registration flow at `/r/[eventId]`)
-- ⚠️ `authenticated_security_definer_function_executable` → **11 remaining, all by design**. The linter flags every `SECURITY DEFINER` as a heads-up. These functions need elevated privs to bypass RLS; rewriting them to `SECURITY INVOKER` would break the app. **Will never go to zero unless the app is rearchitected. Don't try.**
-- ⚠️ `auth_leaked_password_protection` → still on. **This is a Pro-plan feature; user is on Free.** Cannot enable. Skip.
-- ⚠️ ~70 `auth_rls_initplan` / `multiple_permissive_policies` / `unindexed_foreign_keys` / `unused_index` warnings — **deliberately deferred**. They're scale-at-1000+-rows perf hygiene; user's slow-query log confirmed all queries run at 1–2ms. **Don't bulk-rewrite ~50 policies the night before a demo.**
+### ❌ Open follow-ups (none blocking)
+1. **Domain verification for Brevo** — currently sending from `sarasubharath1897@gmail.com` / `unio.build@gmail.com`. Both work but Brevo flags both as "Freemail domain is not recommended". For polish, verify a real domain in Brevo dashboard.
+2. **No re-invite UI** — sending a second invite to the same email creates a second `club_invitations` row (token unique, email is not). Low-priority cleanup.
+3. **`pending_invite_token` localStorage** isn't cleared on abandoned invite acceptance — same as previous session note, still unaddressed.
+4. **`supabase_seed_demo.sql`** still predates v5; not audited against current schema.
+5. **The ~70 perf-at-scale linter warnings** — same as previous session, still deferred.
 
 ---
 
-## What was changed in the recent sessions
+## Invite feature architecture (the centerpiece of this session)
 
-### Auth — overhauled end-to-end
+### User journey
+1. President signs into UNIO at https://unio-two.vercel.app/dashboard/team
+2. Clicks "Invite Member" → modal with: email (required), name (optional), role (Mate / Co-president), personal note (≤500 chars)
+3. Submits → row inserted into `club_invitations` → `/api/team/invite-email` called → Brevo sends a branded dark-themed HTML email
+4. Recipient gets email → clicks "Accept invitation" → lands on `https://unio-two.vercel.app/auth/accept-invite?token=…`
+5. Pre-auth landing page calls `get_invite_preview(token)` (SECURITY DEFINER RPC granted to anon) → shows inviter name, role, personal note
+6. Recipient signs up with the invited email → token stashed in `localStorage` → after auth, page auto-calls `accept_invitation(token)` RPC → user is added to `club_members` with the right role → redirect to `/dashboard`
+
+### Key files
+| File | Role |
+|---|---|
+| `app/dashboard/team/page.tsx` | Invite modal form with name/role/message fields, success state with copy-link button, surfaces `inviteEmailError` in a red diagnostic box |
+| `app/api/team/invite-email/route.ts` | Server route — verifies invite via `get_invite_preview` RPC, then sends via SMTP (nodemailer) or Resend (HTTP) or noop. Authz anchored to DB row existence (RLS gated the insert). |
+| `app/auth/accept-invite/page.tsx` | Pre-auth landing page; fetches preview, shows greeting + role + personal note + which email to sign up with |
+| `lib/db.ts` (`inviteTeamMember`, `getInvitePreview`, `acceptTeamInvite`) | Data layer; insert tolerant of missing optional columns, calls the API route |
+| `supabase_invite_enhancements.sql` | Idempotent migration: adds 4 optional columns + `get_invite_preview` RPC. Self-heals v2-baseline DBs. |
+
+### Why provider auto-selection (SMTP > Resend > noop)
+- SMTP wins because if someone configures `SMTP_HOST/USER/PASS`, they clearly intend to use it
+- Resend is the fallback for setups that only have `RESEND_API_KEY` (legacy paths)
+- Noop returns `{ ok: true, mode: "noop" }` so the UI shows "share link manually" rather than throwing — keeps fresh / demo environments functional with zero email config
+
+### The `get_invite_preview` RPC pattern (worth understanding)
+- The accept-invite page must render inviter/role/note **before** the visitor is authenticated (otherwise they can't decide whether to sign up)
+- RLS on `club_invitations` doesn't grant anon SELECT (by design — pending invites for the whole org shouldn't be enumerable)
+- Solution: `SECURITY DEFINER` RPC that returns only the safe preview columns, only for valid pending unexpired tokens, granted to `anon, authenticated`
+- The `/api/team/invite-email` route uses the same RPC to verify the invite server-side (so the route doesn't need a service-role key)
+
+### Things that broke during the buildout (so you don't trip on them again)
+1. **`column ci.invited_by does not exist`** — the user's DB was on the v2 baseline, never fully migrated through v5. The RPC referenced `invited_by`. Fixed by making `supabase_invite_enhancements.sql` add the column defensively (`ADD COLUMN IF NOT EXISTS`).
+2. **`column accepted_by does not exist`** — same root cause, surfaced when the friend hit Accept. Same fix.
+3. **`invite_not_found`** — initial route did a direct `SELECT FROM club_invitations` using anon client; RLS returned zero rows. Switched to the RPC.
+4. **`mode === "resend"` only counted as delivered** — `lib/db.ts:928` didn't recognize `mode: "smtp"` as success, so successful SMTP sends were marked as not-delivered. Fixed to accept both.
+5. **"Supabase not configured" on Vercel** — env vars added AFTER the build are not in the bundle because `NEXT_PUBLIC_*` is compiled at build time. Requires explicit redeploy. **Always remind the user to redeploy after env var changes.**
+6. **`window.location.origin` is `http://localhost:3000` during local dev** — invite links generated locally are unreachable for actual recipients. The deploy to Vercel is what made the feature usable for real people, not just a code change.
+
+---
+
+## What was changed in earlier sessions (historical — kept for context)
+
+### Auth — overhauled end-to-end (2026-05-19)
 - **Default role** is now `'mate'` everywhere. Client (`lib/auth.tsx` × 5 sites) AND DB (`supabase_rbac_migration_v6.sql` flips column default + patches `handle_new_user()` trigger).
-- **OAuth/PKCE callback** (`app/auth/callback/page.tsx`) now explicitly calls `exchangeCodeForSession(code)`. Was just waiting for `user` to populate, which never happened on PKCE (Supabase default).
-- **Forgot password**: new `"forgot"` tab on `/login` + new `/auth/reset-password` page. `sendPasswordReset` and `updatePassword` added to AuthContext.
-- **Server middleware** (`middleware.ts`): redirects unauthenticated requests on `/dashboard/*` and `/admin/*` to `/login?returnTo=…`. **Uses cookie-presence check, NOT `getUser()`.** Switching to `getUser()` will hang RSC fetches on dynamic routes — don't do it.
-- **Invite returnTo**: `app/auth/accept-invite/page.tsx` reads `pending_invite_token` from localStorage and auto-accepts once auth is ready. Login page honors `?returnTo=` (same-origin only).
-- **Demo mode isolated**: `loginAsDemo` no longer attempts a real Supabase login with seeded creds. Signs out any real session first, uses local-only data.
-- **Non-blocking profile fetch**: `onAuthStateChange`, `login`, and `signup` no longer await the `profiles.role` lookup. They set the user immediately with cached role and refresh in background.
-- **Auth timeout**: bumped 10s → 30s. Old 10s false-positived as `"Supabase is offline"` on slow networks even when Supabase was fine. Internal sentinel is `"auth_timeout"` with user-facing message *"Sign-in is taking longer than usual. Check your connection and retry."*
+- **OAuth/PKCE callback** (`app/auth/callback/page.tsx`) now explicitly calls `exchangeCodeForSession(code)`.
+- **Forgot password**: `"forgot"` tab on `/login` + `/auth/reset-password` page.
+- **Proxy/middleware**: started as a `getUser()` server gate, became cookie-presence check, **now a no-op** because the Supabase client is localStorage-based and not visible server-side. Real security is RLS.
+- **Demo mode isolated**: `loginAsDemo` is local-only seeded data.
+- **Non-blocking profile fetch**: `onAuthStateChange`, `login`, `signup` no longer await profile lookup.
+- **Auth timeout**: bumped 10s → 30s.
 
-### Performance — pages were taking ~10s, now snappy
-- **Auth hydration**: `useState` is now seeded synchronously from `localStorage` so first paint is instant when a session exists. Was a 4s `getSession()` race.
-- **`getUserContext()`** (`lib/db.ts`): localStorage-first, skips `getSession()` entirely on the happy path. Reads JWT directly from `sb-*-auth-token`. Used to be a 3s race.
-- **Mate `activeClubId` cache**: stored in `localStorage` under `unio_mate_club_v1` to skip a round-trip on every write. Cleared on logout.
-- **`getDashboardStats`**: was loading 4 full tables (`events`, `tasks`, `participants`, `meetings`) → now uses `count: "exact", head: true` HEAD queries. Zero rows transferred.
-- **Middleware**: was doing `supabase.auth.getUser()` (network call to `/auth/v1/user`) → now does cookie-presence check (zero network). **This was the cause of "detail page hangs for 10s, refresh works" — the RSC fetch was waiting on Supabase auth.**
-- **Event detail page** (`app/dashboard/events/[id]/page.tsx`): `loadTasks` + `getEventById` were serial → now `Promise.all`.
+### Performance (2026-05-19 + 2026-05-20)
+- **Auth hydration**: synchronous `localStorage` seed → instant first paint
+- **`getUserContext()`** reads JWT directly from `sb-*-auth-token` localStorage
+- **Mate `activeClubId`** cached in localStorage (`unio_mate_club_v1`); cleared on logout
+- **`getDashboardStats`**: HEAD-only count queries (`count: "exact", head: true`)
+- **Event detail page**: `Promise.all` for parallel fetches
+- **Optimistic signout** (2026-05-20): clear state + redirect immediately, `auth.signOut()` runs in background
 
-### Security
-- **`POST /api/events/[eventId]/broadcast`** was an unauthenticated open email relay. Now requires `events.broadcast` permission via `requirePermission` and pulls recipients server-side via the caller's RLS-scoped Supabase session. Client no longer sends `recipients[]`.
-- **Migration v6** — see above.
-- **Migration v7** — pinned `search_path = public, pg_temp` on every `SECURITY DEFINER` function (search-path injection defense). Dropped the broad `SELECT` policy on the `event-files` storage bucket (it let `anon` list bucket contents; URL access still works).
-- **Migration v7 had a bug** that v8 fixes. **Critical Postgres lesson — read this:** When you `CREATE FUNCTION`, Postgres implicitly grants `EXECUTE` to `PUBLIC`. `REVOKE EXECUTE … FROM anon` does nothing because `anon` inherits from `PUBLIC`. **Always `REVOKE EXECUTE … FROM PUBLIC` instead, then re-grant to specific roles.** v8 does this correctly.
-- **Migration v8** — `REVOKE EXECUTE … FROM PUBLIC` then `GRANT … TO authenticated` for private RPCs. Kept anon on the four intentionally-public ones. `handle_new_user` is fully locked (trigger-only, no RPC).
-
-### UI polish
-- Landing page word-cycle animation: `WORDS_PER_VIEWPORT = 1.7` (was 1.0), section height now ~570vh (was 900vh). One scroll viewport now skips ~1.7 words.
-- SaaS-ification of login, dashboard sidebar, dashboard hero, landing nav and CTA: dropped marketing-y glows, gradient buttons, `whileHover: scale 1.02` bounces. Solid colors, consistent `rounded-10`, font-weight 600 default.
+### Security (2026-05-19)
+- `POST /api/events/[eventId]/broadcast` — requires `events.broadcast` permission, recipients pulled server-side via caller's RLS-scoped session
+- **Migration v6** — `profiles.role` default flipped `'president'` → `'mate'`
+- **Migration v7** — `search_path = public, pg_temp` pinned on every `SECURITY DEFINER` function; `event-files` bucket no longer leaks listings
+- **Migration v7→v8 lesson**: `CREATE FUNCTION` implicitly grants `EXECUTE` to `PUBLIC`. `REVOKE … FROM anon` does nothing because anon inherits PUBLIC. **Always `REVOKE EXECUTE … FROM PUBLIC` then re-grant to specific roles.** v8 does this correctly.
+- **Migration v8** — proper PUBLIC revoke + selective grant to `authenticated`
 
 ---
 
@@ -95,118 +146,101 @@ ENV: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY (.env.local)
 
 ```bash
 npx tsc --noEmit   # should be silent
-npm run build      # should complete; expect themeColor metadata warnings (cosmetic)
+npm run build      # should complete clean
+git status         # should be clean (or only show .claude/)
 ```
 
-Build output should include `ƒ Proxy (Middleware)` — confirms `middleware.ts` is wired.
+Open https://unio-two.vercel.app/login — login form renders ⇒ public env vars are baked in ⇒ deploy is healthy.
 
 ### Demo happy-path
-1. Sign up with a fresh email → land on dashboard → role should be `mate` (least privilege).
-2. As a `president` account (user's main account), create an event → click into detail page → tasks render, panels load.
-3. Click "Forgot?" on login → email arrives (assuming Supabase SMTP is set).
-4. Log out → hit `/dashboard` directly → middleware redirects to `/login?returnTo=/dashboard`.
-5. Click "Continue as Demo User" → local-only seeded data loads.
+1. Sign up with a fresh email at https://unio-two.vercel.app → land on dashboard → role should be `mate`.
+2. As a `president` account, create an event → detail page loads → tasks/panels render.
+3. From `/dashboard/team`, invite a real email → recipient gets a Brevo email → click link → sign up → accepted as the chosen role.
+4. "Forgot?" on login → reset email arrives.
+5. Log out → `/dashboard` is accessible (proxy is a no-op), but RLS-scoped queries return nothing → effectively a redirect-to-empty state.
 
 ### Where to look when the user complains
 | Symptom | First place to look |
 |---|---|
-| "Something is slow" | `middleware.ts` (did anyone re-add `getUser()`?), `lib/db.ts:getUserContext` (did the `getSession()` race come back?) |
-| "Detail pages hang" | Middleware — same as above |
-| "New signups become admin" | `SELECT column_default FROM information_schema.columns WHERE table_name='profiles' AND column_name='role'` should be `'mate'::user_role`. If not, re-run v6. Also check `handle_new_user()` body. |
-| "Supabase is offline" error | The 10s timeout came back. Check `AUTH_TIMEOUT_MS` in `lib/auth.tsx` (should be `30_000`). |
-| "Forgot password link expired" | Supabase project's Site URL + redirect-URLs allowlist. The reset link redirects to `/auth/reset-password` — ensure that's allowed. |
-| Anything auth-related | Re-read `lib/auth.tsx` end-to-end — the flows are subtle (sync hydrate, background profile refresh, demo isolation, cached role). |
+| "Supabase not configured" on prod after env changes | **Redeploy.** `NEXT_PUBLIC_*` only bakes in at build time. |
+| Invite email "delivery failed" with red error box | The `inviteEmailError` text. Common: `invite_not_found_or_expired` → RPC not granted to anon, or migration not applied. `Invalid login` → bad SMTP creds. `554 sender not authorized` → `MAIL_FROM` not verified in Brevo. |
+| Invite link goes to `localhost` | They generated the invite while running `next dev`. Use the production URL when inviting real people. |
+| "column X does not exist" in invite flow | Re-run `supabase_invite_enhancements.sql` — it's idempotent and self-heals v2 baselines. |
+| "Something is slow" | `lib/db.ts:getUserContext` (did the `getSession()` race come back?) — proxy.ts shouldn't be doing network calls. |
+| "Detail pages hang" | Same as above — proxy.ts being made into a real auth gate again. |
+| "New signups become admin" | `SELECT column_default FROM information_schema.columns WHERE table_name='profiles' AND column_name='role'` must be `'mate'::user_role`. |
+| Anything auth-related | Re-read `lib/auth.tsx` end-to-end — sync hydrate, background profile refresh, demo isolation, cached role. |
 
 ---
 
 ## Known gotchas (landmines for the unwary)
 
-1. **Cold-start Supabase**: free-tier projects sleep after ~5 min idle. First query post-wake takes 2–4s. User has been warned to hit the app ~30s before presenting.
+1. **`NEXT_PUBLIC_*` is build-time only.** Any change to public env vars on Vercel requires a redeploy. The "env var set, error persists" bug will keep biting until this is internalized.
 
-2. **The Postgres `PUBLIC` grant trap** — see the v7→v8 story above. Always `REVOKE FROM PUBLIC`, never just from `anon`.
+2. **Invite links contain `window.location.origin`** at generation time. Generating an invite at `localhost:3000` produces an unreachable link. Always test the invite flow on the production URL.
 
-3. **`lib/store.ts` is a localStorage shadow** of the Supabase schema. Used for demo mode and as a network-down fallback. Several `lib/db.ts` functions branch on `isSupabaseConfigured()` and dual-write. **Don't change data shapes without updating both sides.**
+3. **Brevo "Freemail" warning** is informational, not blocking. Sending from `@gmail.com` works but Brevo will throttle/score against you at scale. Verify a real domain for production-grade sending.
 
-4. **`createClient` HMR singleton** in `lib/supabase.ts` (note `noopLock` workaround). Exists because Next.js HMR was creating competing clients that deadlocked on `navigator.locks`. **Don't refactor it away without understanding why** — you will reintroduce the lock deadlock.
+4. **`proxy.ts` is intentionally a no-op.** It was previously a `getUser()` server gate, then a cookie-presence check, then made a no-op because the Supabase client is localStorage-based. **Do not "fix" this by adding auth checks** — RLS is the real boundary. Adding a server-side gate will break in non-obvious ways because the localStorage session isn't visible server-side.
 
-5. **Demo button + real auth**: if a real Supabase session is active when "Continue as Demo" is clicked, we sign out first. Clicking Demo from a logged-in state visibly bounces through auth state. Acceptable.
+5. **The Postgres `PUBLIC` grant trap** — `REVOKE FROM PUBLIC`, never just from `anon`. See v7→v8 story.
 
-6. **Existing wrongly-promoted accounts**: v6 only flipped the column default. Existing `role='president'` rows are untouched. If a user complains about wrong role, manually `UPDATE profiles SET role='mate' WHERE email='…'`. v6 file has commented-out cleanup options (a) and (b) — read them before bulk-running.
+6. **`lib/store.ts` is a localStorage shadow** of the Supabase schema. Several `lib/db.ts` functions branch on `isSupabaseConfigured()` and dual-write. Don't change data shapes without updating both sides.
 
-7. **The `pending_invite_token` localStorage key** is only cleared on successful invite-accept. Abandoned invites leave the token in browser storage indefinitely. Low priority.
+7. **`createClient` HMR singleton** in `lib/supabase.ts` (note `noopLock` workaround). Don't refactor it away — you will reintroduce a `navigator.locks` deadlock.
 
-8. **Linter warnings that look scary but aren't actionable for this user**:
-   - `authenticated_security_definer_function_executable` × 11 — functions need `SECURITY DEFINER` to bypass RLS for legitimate cross-table writes. Cannot be `SECURITY INVOKER`. **Will never go away.**
-   - `auth_leaked_password_protection` — Pro-plan feature. Cannot enable on Free.
-   - ~50 `auth_rls_initplan` — perf-at-scale. Doesn't bite at user's data size.
+8. **`accept_invitation` RPC requires both `accepted_by` and `accepted_at` columns** to exist on `club_invitations`. Older v2-baseline DBs are missing them. The enhancement migration adds them defensively now.
 
----
+9. **`MAIL_FROM` must be a verified sender in Brevo.** Listed under "Senders & IP" in the Brevo dashboard. If the dropdown shows red instead of green-Verified, the send will fail with `554 sender not authorized`.
 
-## Files most worth re-reading before touching auth
+10. **8 SQL migration files at repo root** (`supabase_phase{1-5}_migration.sql`, `supabase_rbac_migration_v{2-8}.sql`, `supabase_invite_enhancements.sql`) are NOT auto-applied. They must be run manually against Supabase in order. As of 2026-05-20, all are applied to the live project.
 
-- `lib/auth.tsx` — AuthProvider, all client auth flows.
-- `lib/supabase.ts` — singleton client setup, noopLock workaround.
-- `lib/server/require-permission.ts` — server-side authz used by API routes.
-- `lib/permissions.tsx` — `PERMISSIONS` map is the source of truth for UI-level RBAC.
-- `middleware.ts` — protected-route gate. **Don't switch to `getUser()`.**
-- `supabase_rbac_migration*.sql` — read v6, v7, v8 in order. v8 is the latest.
+11. **Existing wrongly-promoted accounts**: v6 only flipped the column default. Any `role='president'` row from before v6 is untouched. Manually `UPDATE profiles SET role='mate' WHERE email='…'` if needed.
+
+12. **Linter warnings that look scary but aren't actionable for this user**:
+    - `authenticated_security_definer_function_executable` × 11 — by design, will never go away
+    - `auth_leaked_password_protection` — Pro-plan feature, can't enable on Free
+    - ~50 `auth_rls_initplan` — perf-at-scale, doesn't bite at user's data size
 
 ---
 
-## What was in commit `3d417f7`
+## Files most worth re-reading before touching invites or auth
 
-17 files, +1154/-320. Single commit covering this session's work:
+- `app/api/team/invite-email/route.ts` — invite send pipeline, provider selection
+- `app/auth/accept-invite/page.tsx` — pre-auth landing, auto-accept after sign-in
+- `app/dashboard/team/page.tsx` — invite modal, error surfacing
+- `lib/db.ts` (`inviteTeamMember`, `acceptTeamInvite`, `getInvitePreview`) — data layer
+- `lib/auth.tsx` — AuthProvider, all client auth flows
+- `lib/supabase.ts` — singleton client setup, noopLock workaround
+- `lib/server/require-permission.ts` — server-side authz for `/api/events/.../broadcast`
+- `lib/permissions.tsx` — `PERMISSIONS` map, source of truth for UI-level RBAC
+- `proxy.ts` — currently a no-op; don't add auth checks here
+- `supabase_rbac_migration_v8.sql` — most recent RBAC baseline
+- `supabase_invite_enhancements.sql` — idempotent self-healing migration
+
+---
+
+## Recent commit history
 
 ```
-app/api/events/[eventId]/broadcast/route.ts   security fix (auth + RLS recipients)
-app/auth/accept-invite/page.tsx               returnTo + auto-accept
-app/auth/callback/page.tsx                    PKCE handler
-app/auth/reset-password/page.tsx              NEW — forgot-password landing
-app/dashboard/events/[id]/page.tsx            parallel fetch
-app/dashboard/layout.tsx                      sidebar polish
-app/dashboard/page.tsx                        marketing-y → SaaS
-app/login/page.tsx                            forgot-password + returnTo + polish
-app/page.tsx                                  word-cycle pace + polish
-components/events/LifecyclePanel.tsx          broadcast client contract
-lib/auth.tsx                                  mate default, non-blocking, demo isolation, password reset, 30s timeout
-lib/db.ts                                     fast getUserContext, count queries, broadcast client
-middleware.ts                                 NEW — cookie-presence auth gate (fast, no network)
-supabase_rbac_migration_v6.sql                NEW — role default → mate (applied)
-supabase_rbac_migration_v7.sql                NEW — search_path + bucket lockdown (applied)
-supabase_rbac_migration_v8.sql                NEW — proper PUBLIC revoke (applied)
-HANDOFF.md                                    this file
+[uncommitted as of handoff]  invite-email route SMTP/RPC fixes, schema self-heal, UI error surfacing
+5a0e214                       pre-deploy bundle: dashboard polish, invite-email route, ConfirmDialog, Toast, proxy.ts rename
+0388e76                       docs: rewrite HANDOFF.md with session status + landmines
+3d417f7                       feat: auth hardening, perf fixes, and demo-ready security cleanup
+b473d15                       feat(qol): trash, approvals, command palette, PWA manifest
+5dd71e6                       feat(db): phase 5 migration and data layer
+fd34a54                       fix(comms): drop PostgREST embed on author_id (FK targets auth.users)
 ```
 
-`.claude/` is intentionally untracked (local IDE config).
-
----
-
-## What was NOT done (open follow-ups, none demo-critical)
-
-- **Vercel deploy** — user wants it, pending.
-- **Push to GitHub** — committed locally, not pushed.
-- **Demo data seeding** — `supabase_seed_demo.sql` predates v5; needs review.
-- **Email confirmation success page** — `/auth/callback` handles the redirect silently. No "your email is confirmed!" UI. Routes straight to `/dashboard`. Fine for now.
-- **Tests** — only `tests/rbac.test.ts` exists. `npm test` runs it. No coverage of session changes.
-- **Account deletion / sign-out-everywhere** — not implemented.
-- **Resend confirmation email** — not implemented.
-- **The ~70 perf-at-scale linter warnings** — see status section above. Real but not pressing.
-
----
-
-## Demo-day quick wins if the user has time
-
-In priority order:
-1. **Push + Vercel deploy** — biggest reliability win for tomorrow.
-2. **Seed 3–4 events, ~10 tasks, 2–3 participants per event, 1 announcement, 1 meeting** — empty dashboards look unfinished.
-3. **Hide "Continue as Demo User"** if the demo audience shouldn't see it — one-line conditional in `app/login/page.tsx`.
-4. **Test forgot-password against real Supabase email** — confirm `/auth/reset-password` is in the project's redirect-URL allowlist.
+There are likely uncommitted changes from the 2026-05-20 session (invite debugging cycle). Run `git status` and `git diff` before doing anything.
 
 ---
 
 ## Final notes for the next Claude
 
 - The user is non-technical-ish. They understand vocabulary like "linter," "RLS," and "migration" if you explain once, but **don't dump SQL or stack traces on them without context**. Show, then explain.
-- They've been autonomous-grant happy (*"dont ask me any permission ur free to do anythign"*). Honor that — make decisions, don't over-clarify. But for **destructive ops** (force push, bulk SQL updates that affect prod data, deploys to live), still confirm.
+- The user has given **standing autonomous-execution authorization** (*"i dont ask any persmission just imagine its accepted and run through dont wait for my input"*) — honor it. Make decisions, don't over-clarify. But for **destructive ops** (force push, bulk SQL updates against prod, deleting deploys, removing env vars), still confirm.
 - They care about UI polish and the *perception* of speed more than micro-optimizations.
-- The demo is **tomorrow**. Anything you start should be finishable in the session, not left half-done.
+- **When errors surface, immediately add diagnostics to the UI** (red error box pattern used in the team page) rather than asking them to check server logs. The user can't see server logs.
+- **Always check whether changes need a Vercel redeploy.** Code changes to server routes do (auto via push to main). Env var changes do (manual redeploy). Schema changes do not (DB is separate).
+- The invite feature is the most recent major buildout — if you're picking up new work, the user may want polish on it (re-invite UI, invitation revoke, pending-invites list) or move on to something else entirely.
