@@ -14,10 +14,14 @@ import { formatRelativeTime } from "@/lib/store";
 import { useAuth } from "@/lib/auth";
 import { PermissionGate, useCan } from "@/lib/permissions";
 import { Markdown } from "@/components/announcements/md";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 export default function AnnouncementsPage() {
   const { user } = useAuth();
   const canCreate = useCan("announcements.create");
+  const toast = useToast();
+  const confirm = useConfirm();
   const [items, setItems] = useState<UnioAnnouncement[]>([]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,15 +56,27 @@ export default function AnnouncementsPage() {
       await refresh();
     } catch (e) {
       console.error(e);
-      alert(`Failed to post: ${e instanceof Error ? e.message : "unknown error"}`);
+      toast.error(`Failed to post: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
       setBusy(false);
     }
   };
 
   const onDelete = async (id: string) => {
-    if (!confirm("Delete this announcement?")) return;
-    await deleteAnnouncement(id).then(refresh).catch((e) => alert(e.message));
+    const ok = await confirm({
+      title: "Delete announcement?",
+      message: "This will remove the post for everyone. You can't undo this.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await deleteAnnouncement(id);
+      await refresh();
+      toast.success("Announcement deleted.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete.");
+    }
   };
 
   return (

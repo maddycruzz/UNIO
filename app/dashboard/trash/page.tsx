@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Trash2, RotateCcw, AlertTriangle, Loader2, Calendar, ListChecks, Video } from "lucide-react";
 import { loadTrash, restoreFromTrash, purgeFromTrash, type TrashEntry } from "@/lib/db";
 import { useCan } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 const ICON_FOR = {
   event:   Calendar,
@@ -14,6 +16,8 @@ const ICON_FOR = {
 export default function TrashPage() {
   const canRestore = useCan("trash.restore");
   const canView = useCan("trash.view");
+  const toast = useToast();
+  const confirm = useConfirm();
   const [items, setItems] = useState<TrashEntry[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -39,17 +43,35 @@ export default function TrashPage() {
 
   const onRestore = async (e: TrashEntry) => {
     setBusyId(e.id);
-    await restoreFromTrash(e.kind, e.id);
-    setBusyId(null);
-    await refresh();
+    try {
+      await restoreFromTrash(e.kind, e.id);
+      await refresh();
+      toast.success(`Restored "${e.title}".`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't restore.");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const onPurge = async (e: TrashEntry) => {
-    if (!confirm(`Permanently delete "${e.title}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: "Delete permanently?",
+      message: `"${e.title}" will be gone for good. This cannot be undone.`,
+      confirmLabel: "Delete forever",
+      variant: "danger",
+    });
+    if (!ok) return;
     setBusyId(e.id);
-    await purgeFromTrash(e.kind, e.id);
-    setBusyId(null);
-    await refresh();
+    try {
+      await purgeFromTrash(e.kind, e.id);
+      await refresh();
+      toast.success("Permanently deleted.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete.");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (

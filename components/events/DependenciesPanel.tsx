@@ -5,11 +5,13 @@ import { GitBranch, Lock, CheckCircle2, X, ChevronDown, Plus } from "lucide-reac
 import { loadTasks, loadTaskDependencies, addTaskDependency, removeTaskDependency, isTaskUnblocked, getEventById } from "@/lib/db";
 import type { UnioTask, TaskDependencyEdge } from "@/lib/store";
 import { useCan } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
 
 interface Props { eventId: string }
 
 export function DependenciesPanel({ eventId }: Props) {
   const canEdit = useCan("tasks.set_deps");
+  const toast = useToast();
   const [tasks, setTasks] = useState<UnioTask[]>([]);
   const [eventName, setEventName] = useState<string>("");
   const [deps, setDeps] = useState<TaskDependencyEdge[]>([]);
@@ -49,7 +51,7 @@ export function DependenciesPanel({ eventId }: Props) {
     if (!pickerValue || pickerValue === taskId) return;
     // Avoid cycle: don't allow A → B if B already depends on A.
     if ((depMap.get(pickerValue) ?? []).includes(taskId)) {
-      alert("That would create a circular dependency.");
+      toast.error("That would create a circular dependency.");
       return;
     }
     await addTaskDependency({ taskId, dependsOnTaskId: pickerValue });

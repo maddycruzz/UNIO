@@ -18,7 +18,6 @@ export const metadata: Metadata = {
   title: "UNIO",
   description: "Event management, reimagined for campus.",
   manifest: "/manifest.json",
-  themeColor: "#0F1117",
   appleWebApp: {
     capable: true,
     title: "UNIO",

@@ -64,9 +64,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
-  const [time, setTime] = useState(new Date());
+  // Use null on first render so server + client agree; set the real Date after mount.
+  const [time, setTime] = useState<Date | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   const sidebarW = collapsed ? SIDEBAR_W_COL : SIDEBAR_W;
+
+  // Server has no localStorage and renders the loading spinner. The client may
+  // have a cached session that resolves synchronously, so the first client
+  // render must match the server (spinner) and only swap in the real layout
+  // after mount. Same pattern as the login page.
+  useEffect(() => {
+    setMounted(true);
+    setTime(new Date());
+  }, []);
 
   // Seed store on first visit
   useEffect(() => { ensureSeeded(); }, []);
@@ -95,11 +106,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const getActive = (href: string) => href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
   const activeItem = NAV_ITEMS.find(i => getActive(i.href));
-  const hours = time.getHours();
+  const hours = time?.getHours() ?? 0;
   const greeting = hours < 12 ? "Morning" : hours < 18 ? "Afternoon" : "Evening";
 
-  // Show nothing while auth is loading (prevents flash)
-  if (loading) {
+  // Show nothing while auth is loading (prevents flash + ensures the first
+  // client render matches the server-rendered spinner).
+  if (!mounted || loading) {
     return (
       <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366F1", animation: "spin 0.8s linear infinite" }} />

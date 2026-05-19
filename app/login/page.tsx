@@ -33,7 +33,14 @@ function LoginForm() {
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const supabaseReady = isSupabaseConfigured();
+
+  // Server renders with no localStorage (loading=true → spinner). The client
+  // can synchronously read a cached session, which would otherwise paint the
+  // full form on first render and trip hydration. Gate on mount so the first
+  // client render matches the server.
+  useEffect(() => { setMounted(true); }, []);
 
   // Same-origin returnTo (defaults to /dashboard, no open-redirect).
   const rawReturnTo = searchParams.get("returnTo");
@@ -114,10 +121,11 @@ function LoginForm() {
     }
   };
 
-  if (loading) {
+  if (!mounted || loading) {
     return (
       <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366F1", animation: "spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }

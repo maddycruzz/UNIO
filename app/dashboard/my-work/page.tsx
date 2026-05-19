@@ -12,17 +12,18 @@ export default function MyWorkPage() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     const fetchData = async () => {
-      const allTasks = await dbLoadTasks();
-      const allParticipants = await dbLoadParticipants();
-      
-      const myTasks = allTasks.filter(t => t.assignees.some(a => a.i === user.initials));
-      setTasks(myTasks);
-      
-      const todayCheckins = allParticipants.filter(p => p.status === "checked-in");
-      setParticipants(todayCheckins);
+      const [allTasks, allParticipants] = await Promise.all([
+        dbLoadTasks(),
+        dbLoadParticipants(),
+      ]);
+      if (cancelled) return;
+      setTasks(allTasks.filter((t) => t.assignees.some((a) => a.i === user.initials)));
+      setParticipants(allParticipants.filter((p) => p.status === "checked-in"));
     };
     fetchData();
+    return () => { cancelled = true; };
   }, [user]);
 
   return (

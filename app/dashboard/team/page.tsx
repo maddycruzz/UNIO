@@ -4,17 +4,27 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { loadTeamMembers, removeTeamMember, inviteTeamMember, type TeamMember } from "@/lib/db";
-import { Plus, Mail, Trash2, Crown, User, CheckCircle2 } from "lucide-react";
+import { Plus, Mail, Trash2, Crown, User, CheckCircle2, Copy, Check } from "lucide-react";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 export default function TeamPage() {
   const { user } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState<"mate" | "president">("mate");
+  const [inviteMessage, setInviteMessage] = useState("");
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [inviteEmailDelivered, setInviteEmailDelivered] = useState<boolean | null>(null);
+  const [inviteEmailError, setInviteEmailError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState("");
+  const [copiedLink, setCopiedLink] = useState(false);
 
   useEffect(() => {
     fetchTeam();
@@ -27,28 +37,89 @@ export default function TeamPage() {
     setLoading(false);
   };
 
+  const resetInviteForm = () => {
+    setShowInvite(false);
+    setInviteSuccess(false);
+    setInviteEmail("");
+    setInviteName("");
+    setInviteRole("mate");
+    setInviteMessage("");
+    setInviteLink("");
+    setInviteEmailDelivered(null);
+    setInviteEmailError(null);
+    setCopiedLink(false);
+  };
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail) return;
+    if (!inviteEmail.trim()) {
+      toast.error("Please enter an email address.");
+      return;
+    }
     setInviting(true);
     try {
-      const res = await inviteTeamMember(inviteEmail);
+      const res = await inviteTeamMember({
+        email: inviteEmail.trim(),
+        name: inviteName.trim() || undefined,
+        role: inviteRole,
+        message: inviteMessage.trim() || undefined,
+        inviterName: user?.name,
+      });
       setInviting(false);
       setInviteSuccess(true);
+      setInviteEmailDelivered(res.emailDelivered ?? false);
+      setInviteEmailError(res.emailError ?? null);
       if (res.token) {
         setInviteLink(`${window.location.origin}/auth/accept-invite?token=${res.token}`);
       }
+      if (res.emailDelivered) {
+        toast.success(`Invitation emailed to ${inviteEmail.trim()}.`);
+      } else if (res.emailError) {
+        toast.info("Invite created — email delivery failed. Share the link manually.");
+      } else {
+        toast.info("Invite created — email isn't configured. Share the link manually.");
+      }
+      // Refresh the team list so a re-invite of an existing member updates state.
+      fetchTeam();
     } catch (err: any) {
-      console.error(err);
+      console.warn("invite failed:", err);
       setInviting(false);
-      alert(`Failed to send invite: ${err.message || err}`);
+      toast.error(`Failed to send invite: ${err?.message || err}`);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setCopiedLink(true);
+      toast.success("Link copied to clipboard.");
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch {
+      toast.error("Couldn't copy — select the link and copy manually.");
     }
   };
 
   const handleRemove = async (id: string) => {
-    if (!confirm("Are you sure you want to remove this member?")) return;
-    setTeam(prev => prev.filter(m => m.id !== id));
-    await removeTeamMember(id);
+    const member = team.find((m) => m.id === id);
+    const ok = await confirm({
+      title: "Remove team member?",
+      message: member?.name
+        ? `${member.name} will lose access to this club's data. They can be re-invited later.`
+        : "They will lose access to this club's data. They can be re-invited later.",
+      confirmLabel: "Remove",
+      variant: "danger",
+    });
+    if (!ok) return;
+    const prev = team;
+    setTeam((p) => p.filter((m) => m.id !== id));
+    try {
+      await removeTeamMember(id);
+      toast.success("Member removed.");
+    } catch (e) {
+      setTeam(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't remove member.");
+    }
   };
 
   if (user?.role !== "president" && user?.role !== "developer") {
@@ -136,54 +207,175 @@ export default function TeamPage() {
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              style={{ background: "#1A1D2E", borderRadius: 24, padding: 32, width: "100%", maxWidth: 400, border: "1px solid rgba(255,255,255,0.05)", position: "relative" }}
+              style={{ background: "#1A1D2E", borderRadius: 24, padding: 28, width: "100%", maxWidth: 460, border: "1px solid rgba(255,255,255,0.05)", position: "relative", maxHeight: "90vh", overflowY: "auto" }}
             >
-              <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700, color: "#fff" }}>Invite Club Mate</h2>
-              <p style={{ margin: "0 0 24px", color: "rgba(255,255,255,0.5)", fontSize: 14 }}>They will receive an email to join your club workspace.</p>
-              
-              <form onSubmit={handleInvite}>
-                <div style={{ marginBottom: 24 }}>
-                  <label style={{ display: "block", marginBottom: 8, fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.7)" }}>Email Address</label>
-                  <div style={{ position: "relative" }}>
-                    <Mail size={16} style={{ position: "absolute", left: 16, top: 14, color: "rgba(255,255,255,0.4)" }} />
-                    <input
-                      type="email"
-                      value={inviteEmail}
-                      onChange={e => setInviteEmail(e.target.value)}
-                      placeholder="mate@college.edu"
-                      required
-                      style={{ width: "100%", padding: "12px 16px 12px 42px", borderRadius: 12, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box" }}
-                    />
+              {inviteSuccess ? (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 10, background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <CheckCircle2 size={16} color="#34D399" />
+                    </div>
+                    <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: "#fff" }}>Invitation ready</h2>
                   </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button
-                    type="button"
-                    onClick={() => { setShowInvite(false); setInviteSuccess(false); setInviteLink(""); }}
-                    style={{ flex: 1, padding: "12px", borderRadius: 12, background: "rgba(255,255,255,0.05)", color: "#fff", fontWeight: 600, fontSize: 14, border: "none", cursor: "pointer" }}
-                  >
-                    Cancel
-                  </button>
-                  {!inviteSuccess && (
-                    <button
-                      type="submit"
-                      disabled={inviting}
-                      style={{ flex: 1, padding: "12px", borderRadius: 12, background: "#6366F1", color: "#fff", fontWeight: 600, fontSize: 14, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-                    >
-                      {inviting ? "Sending..." : "Send Invite"}
-                    </button>
+                  <p style={{ margin: "0 0 20px", color: "rgba(255,255,255,0.55)", fontSize: 13.5, lineHeight: 1.5 }}>
+                    {inviteEmailDelivered
+                      ? <>An email has been sent to <strong style={{ color: "#fff" }}>{inviteEmail}</strong>. They&apos;ll be a {inviteRole === "president" ? "co-president" : "Club Mate"} once they accept.</>
+                      : inviteEmailError
+                        ? <>The invite is saved, but the email couldn&apos;t be delivered to <strong style={{ color: "#fff" }}>{inviteEmail}</strong>. Share the link below manually — it&apos;s valid for 7 days.</>
+                        : <>Email delivery isn&apos;t set up here, but the invite is saved. Share the link below with <strong style={{ color: "#fff" }}>{inviteEmail}</strong> — it&apos;s valid for 7 days.</>
+                    }
+                  </p>
+                  {inviteEmailError && (
+                    <div style={{ margin: "0 0 16px", padding: "10px 12px", borderRadius: 8, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5", fontSize: 11.5, fontFamily: "monospace", lineHeight: 1.5, wordBreak: "break-word" }}>
+                      <strong style={{ color: "#fecaca", fontFamily: "inherit" }}>Send error:</strong> {inviteEmailError}
+                    </div>
                   )}
-                </div>
-                
-                {inviteSuccess && inviteLink && (
-                  <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.2)" }}>
-                    <p style={{ margin: "0 0 8px", fontSize: 13, color: "#10B981", fontWeight: 600 }}><CheckCircle2 size={14} className="inline mr-1" /> Invitation Created</p>
-                    <p style={{ margin: "0 0 8px", fontSize: 12, color: "rgba(255,255,255,0.6)" }}>For demo purposes, share this link with the user:</p>
-                    <input type="text" readOnly value={inviteLink} onClick={e => e.currentTarget.select()} style={{ width: "100%", padding: "8px 12px", borderRadius: 6, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 12, outline: "none" }} />
+
+                  <label style={{ display: "block", marginBottom: 8, fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    Invitation link
+                  </label>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                    <input
+                      type="text"
+                      readOnly
+                      value={inviteLink}
+                      onClick={e => e.currentTarget.select()}
+                      style={{ flex: 1, padding: "10px 12px", borderRadius: 9, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 12, outline: "none", fontFamily: "monospace", minWidth: 0 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={copyInviteLink}
+                      style={{ padding: "10px 14px", borderRadius: 9, background: copiedLink ? "rgba(16,185,129,0.15)" : "rgba(99,102,241,0.15)", border: `1px solid ${copiedLink ? "rgba(16,185,129,0.35)" : "rgba(99,102,241,0.35)"}`, color: copiedLink ? "#34D399" : "#A5B4FC", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                    >
+                      {copiedLink ? <Check size={14} /> : <Copy size={14} />}
+                      {copiedLink ? "Copied" : "Copy"}
+                    </button>
                   </div>
-                )}
-              </form>
+
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={resetInviteForm}
+                      style={{ flex: 1, padding: "11px", borderRadius: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
+                    >
+                      Done
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInviteSuccess(false);
+                        setInviteEmail("");
+                        setInviteName("");
+                        setInviteMessage("");
+                        setInviteEmailDelivered(null);
+                        setInviteLink("");
+                        setCopiedLink(false);
+                      }}
+                      style={{ flex: 1, padding: "11px", borderRadius: 10, background: "#6366F1", border: "none", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
+                    >
+                      Invite another
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2 style={{ margin: "0 0 6px", fontSize: 19, fontWeight: 700, color: "#fff" }}>Invite a team member</h2>
+                  <p style={{ margin: "0 0 22px", color: "rgba(255,255,255,0.55)", fontSize: 13.5 }}>
+                    They&apos;ll get an email with a link to set up their account.
+                  </p>
+
+                  <form onSubmit={handleInvite}>
+                    <label style={{ display: "block", marginBottom: 8, fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      Email <span style={{ color: "#F87171" }}>*</span>
+                    </label>
+                    <div style={{ position: "relative", marginBottom: 16 }}>
+                      <Mail size={14} style={{ position: "absolute", left: 14, top: 13, color: "rgba(255,255,255,0.35)" }} />
+                      <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={e => setInviteEmail(e.target.value)}
+                        placeholder="mate@college.edu"
+                        required
+                        autoFocus
+                        style={{ width: "100%", padding: "11px 14px 11px 38px", borderRadius: 10, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                      />
+                    </div>
+
+                    <label style={{ display: "block", marginBottom: 8, fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      Name <span style={{ fontWeight: 500, color: "rgba(255,255,255,0.3)" }}>(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={inviteName}
+                      onChange={e => setInviteName(e.target.value)}
+                      placeholder="e.g. Ayaan Nizam"
+                      autoComplete="off"
+                      style={{ width: "100%", padding: "11px 14px", borderRadius: 10, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box", marginBottom: 16, fontFamily: "inherit" }}
+                    />
+
+                    <label style={{ display: "block", marginBottom: 8, fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      Role
+                    </label>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                      {(["mate", "president"] as const).map((r) => {
+                        const active = inviteRole === r;
+                        const Icon = r === "president" ? Crown : User;
+                        return (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setInviteRole(r)}
+                            style={{
+                              flex: 1, padding: "11px", borderRadius: 10,
+                              background: active ? (r === "president" ? "rgba(245,158,11,0.12)" : "rgba(99,102,241,0.12)") : "rgba(0,0,0,0.25)",
+                              border: `1px solid ${active ? (r === "president" ? "rgba(245,158,11,0.4)" : "rgba(99,102,241,0.4)") : "rgba(255,255,255,0.1)"}`,
+                              color: active ? (r === "president" ? "#FBBF24" : "#A5B4FC") : "rgba(255,255,255,0.55)",
+                              fontWeight: 600, fontSize: 13, cursor: "pointer",
+                              display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                              fontFamily: "inherit",
+                            }}
+                          >
+                            <Icon size={13} />
+                            {r === "president" ? "Co-president" : "Club Mate"}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <label style={{ display: "block", marginBottom: 8, fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      Personal note <span style={{ fontWeight: 500, color: "rgba(255,255,255,0.3)" }}>(optional)</span>
+                    </label>
+                    <textarea
+                      value={inviteMessage}
+                      onChange={e => setInviteMessage(e.target.value)}
+                      placeholder="Something to say in the invite email…"
+                      rows={3}
+                      maxLength={500}
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 13.5, outline: "none", boxSizing: "border-box", marginBottom: 6, fontFamily: "inherit", resize: "vertical", minHeight: 60 }}
+                    />
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginBottom: 22, textAlign: "right" }}>
+                      {inviteMessage.length}/500
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button
+                        type="button"
+                        onClick={resetInviteForm}
+                        style={{ flex: 1, padding: "11px", borderRadius: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={inviting}
+                        style={{ flex: 1, padding: "11px", borderRadius: 10, background: inviting ? "rgba(99,102,241,0.5)" : "#6366F1", border: "none", color: "#fff", fontWeight: 600, fontSize: 13, cursor: inviting ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "inherit" }}
+                      >
+                        {inviting ? "Sending invite…" : "Send invitation"}
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
             </motion.div>
           </div>
         )}

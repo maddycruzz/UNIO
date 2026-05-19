@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
+import { getPlatformStats } from "@/lib/db";
 import Link from "next/link";
 import { Shield, Users, Database, Activity, ArrowLeft } from "lucide-react";
 
 export default function AdminPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [stats, setStats] = useState({ clubs: 0, users: 0, events: 0 });
+  const [stats, setStats] = useState<{ totalUsers: number; totalEvents: number; totalTasks: number } | null>(null);
 
   useEffect(() => {
     if (!loading && user?.role !== "developer") {
@@ -18,15 +19,13 @@ export default function AdminPage() {
     }
   }, [user, loading, router]);
 
-  // Dummy stats simulation for Phase 2 prototype
   useEffect(() => {
-    if (user?.role === "developer") {
-      setStats({
-        clubs: 14,
-        users: 342,
-        events: 89,
-      });
-    }
+    if (user?.role !== "developer") return;
+    let cancelled = false;
+    getPlatformStats()
+      .then((s) => { if (!cancelled) setStats(s); })
+      .catch(() => { if (!cancelled) setStats({ totalUsers: 0, totalEvents: 0, totalTasks: 0 }); });
+    return () => { cancelled = true; };
   }, [user]);
 
   if (loading || user?.role !== "developer") {
@@ -70,9 +69,9 @@ export default function AdminPage() {
         {/* Stats Grid */}
         <div className="mb-12 grid grid-cols-1 gap-6 sm:grid-cols-3">
           {[
-            { label: "Active Clubs", value: stats.clubs, icon: Users, color: "text-indigo-400", bg: "bg-indigo-400/10" },
-            { label: "Total Users", value: stats.users, icon: Activity, color: "text-emerald-400", bg: "bg-emerald-400/10" },
-            { label: "Total Events", value: stats.events, icon: Database, color: "text-amber-400", bg: "bg-amber-400/10" },
+            { label: "Total Users",  value: stats?.totalUsers,  icon: Users,    color: "text-indigo-400",  bg: "bg-indigo-400/10" },
+            { label: "Total Events", value: stats?.totalEvents, icon: Database, color: "text-emerald-400", bg: "bg-emerald-400/10" },
+            { label: "Total Tasks",  value: stats?.totalTasks,  icon: Activity, color: "text-amber-400",   bg: "bg-amber-400/10" },
           ].map((stat, i) => (
             <motion.div
               key={stat.label}
@@ -84,7 +83,9 @@ export default function AdminPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-slate-400">{stat.label}</div>
-                  <div className="mt-2 text-4xl font-bold tracking-tight">{stat.value}</div>
+                  <div className="mt-2 text-4xl font-bold tracking-tight">
+                    {stat.value === undefined ? "—" : stat.value.toLocaleString()}
+                  </div>
                 </div>
                 <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${stat.bg} ${stat.color}`}>
                   <stat.icon size={24} />
@@ -101,18 +102,15 @@ export default function AdminPage() {
             <h2 className="mb-6 text-lg font-bold">System Status</h2>
             <div className="space-y-4">
               {[
-                { service: "Database", status: "Operational", uptime: "99.99%" },
-                { service: "Auth Provider", status: "Operational", uptime: "100%" },
-                { service: "Storage", status: "Operational", uptime: "99.98%" },
-              ].map((sys, i) => (
-                <div key={i} className="flex items-center justify-between rounded-xl bg-black/40 p-4 ring-1 ring-white/5">
+                { service: "Database",      status: "Operational" },
+                { service: "Auth Provider", status: "Operational" },
+                { service: "Storage",       status: "Operational" },
+              ].map((sys) => (
+                <div key={sys.service} className="flex items-center justify-between rounded-xl bg-black/40 p-4 ring-1 ring-white/5">
                   <div className="font-medium">{sys.service}</div>
-                  <div className="flex items-center gap-6">
-                    <div className="text-xs text-slate-400">Uptime: {sys.uptime}</div>
-                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
-                      <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-                      {sys.status}
-                    </div>
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+                    <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+                    {sys.status}
                   </div>
                 </div>
               ))}

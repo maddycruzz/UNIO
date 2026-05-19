@@ -20,6 +20,7 @@ import {
 } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
 import { PermissionGate } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
 
 type Task = UnioTask;
 
@@ -157,9 +158,11 @@ function TaskRow({ task, onCycle, idx }: { task: Task; onCycle: (id: string, for
 
 export default function MyTasksPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const [tasks, setTasks]     = useState<Task[]>([]);
   const [events, setEvents]   = useState<UnioEvent[]>([]);
   const [team, setTeam]       = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [eventFilter, setEF]  = useState("All");
   const [statusFilter, setSF] = useState("All");
   const [showAddTask, setShowAddTask] = useState(false);
@@ -179,25 +182,38 @@ export default function MyTasksPage() {
   }, [profile, newTaskAssignees]);
 
   useEffect(() => {
-    const fetchTasks = async () => setTasks(await dbLoadTasks());
-    const fetchEvents = async () => setEvents(await dbLoadEvents());
-    const fetchTeam = async () => setTeam(await loadTeamMembers());
-    fetchTasks();
-    fetchEvents();
-    fetchTeam();
-    const handler = () => {
-      fetchTasks();
-      fetchEvents();
-      fetchTeam();
+    let cancelled = false;
+    const fetchAll = async (initial: boolean) => {
+      const [t, e, m] = await Promise.all([
+        dbLoadTasks(),
+        dbLoadEvents(),
+        loadTeamMembers(),
+      ]);
+      if (cancelled) return;
+      setTasks(t);
+      setEvents(e);
+      setTeam(m);
+      if (initial) setLoading(false);
     };
+    fetchAll(true);
+    const handler = () => fetchAll(false);
     window.addEventListener("unio-store-change", handler);
-    return () => window.removeEventListener("unio-store-change", handler);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("unio-store-change", handler);
+    };
   }, []);
 
   const cycleStatus = async (id: string, forceTo?: TaskStatus) => {
+    const prev = tasks;
     const updated = tasks.map((t) => t.id !== id ? t : { ...t, status: forceTo ?? STATUS_CYCLE[t.status] });
     setTasks(updated);
-    await dbSaveTasks(updated);
+    try {
+      await dbSaveTasks(updated);
+    } catch (e) {
+      setTasks(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't update task. Please try again.");
+    }
   };
 
   const handleAddTask = async () => {
@@ -275,13 +291,32 @@ export default function MyTasksPage() {
   const total  = tasks.length;
   const done   = tasks.filter(t => t.status === "done").length;
   const inprog = tasks.filter(t => t.status === "inprogress").length;
-  const pct    = Math.round((done / total) * 100);
+  const pct    = total === 0 ? 0 : Math.round((done / total) * 100);
 
   const sections = [
     { key: "inprogress" as TaskStatus, label: "In Progress", color: "#F59E0B", tasks: filtered.filter(t => t.status === "inprogress") },
     { key: "todo"       as TaskStatus, label: "To Do",        color: "#6366F1", tasks: filtered.filter(t => t.status === "todo") },
     { key: "done"       as TaskStatus, label: "Done",          color: "#10B981", tasks: filtered.filter(t => t.status === "done") },
   ].filter(s => s.tasks.length > 0);
+
+  if (loading) {
+    return (
+      <div style={{ fontFamily: "'DM Sans',system-ui,sans-serif", color: "white", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ height: 36, width: 200, borderRadius: 8, background: "rgba(255,255,255,0.05)" }} />
+        <div style={{ height: 120, borderRadius: 16, background: "rgba(255,255,255,0.04)" }} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          {[0, 1, 2].map((i) => (
+            <div key={i} style={{ height: 88, borderRadius: 16, background: "rgba(255,255,255,0.04)" }} />
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} style={{ height: 56, borderRadius: 12, background: "rgba(255,255,255,0.04)" }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: "'DM Sans',system-ui,sans-serif", color: "white" }}>

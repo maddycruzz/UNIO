@@ -9,6 +9,7 @@ import {
 import { useFabric, CERT_WIDTH, CERT_HEIGHT } from './FabricContext';
 import { CERT_TEMPLATES, TemplateData } from './templates-data';
 import LayersPanel from './LayersPanel';
+import { useToast } from '@/components/ui/Toast';
 
 export function AccordionSection({ 
   title, 
@@ -84,13 +85,14 @@ function TemplateMiniPreview({ t }: { t: TemplateData }) {
 
 export default function TemplatesSidebar() {
   const { loadJSON, addRect, addCircle, addText, canvas, pushHistory, refreshLayers } = useFabric();
+  const toast = useToast();
 
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !canvas) return;
 
     if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
-      alert("PDF formats require an external conversion server which is currently disabled. Please convert the PDF to a JPEG or PNG and upload again.");
+      toast.error("PDFs aren't supported yet. Please upload a JPEG or PNG.", { duration: 6000 });
       e.target.value = '';
       return;
     }

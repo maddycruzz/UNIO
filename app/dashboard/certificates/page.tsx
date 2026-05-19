@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown, ChevronLeft, ChevronRight, Search, Check,
   Download, Sparkles, Loader2, CheckCircle2,
-  Users, FolderUp, Settings2, Layers, LayoutTemplate, PanelLeftClose, PanelRightClose,
+  Users, Settings2, Layers, LayoutTemplate, PanelLeftClose, PanelRightClose,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { EventInfo, Participant } from '@/components/certificates/types';
@@ -530,11 +530,6 @@ function CertificatesContent() {
             onClick={downloadAllZip} disabled={selected.size === 0 || downloadingAll}
             style={actionBtn(selected.size > 0, '#10B981')}>
             {downloadingAll ? <Loader2 size={13} className="spin" /> : <Download size={13} />} ZIP
-          </motion.button>
-          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-            onClick={() => alert('Google Drive stub')}
-            style={actionBtn(false, '#60a5fa')}>
-            <FolderUp size={13} /> Drive
           </motion.button>
           <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
             onClick={generateBulk} disabled={selected.size === 0 || generating}

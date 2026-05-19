@@ -6,6 +6,7 @@ import { loadApprovals, reviewApproval } from "@/lib/db";
 import type { UnioApprovalRequest } from "@/lib/store";
 import { useCan } from "@/lib/permissions";
 import { formatRelativeTime } from "@/lib/store";
+import { useToast } from "@/components/ui/Toast";
 
 const KIND_LABEL: Record<UnioApprovalRequest["kind"], string> = {
   event_create:   "Create event",
@@ -20,6 +21,7 @@ const KIND_LABEL: Record<UnioApprovalRequest["kind"], string> = {
 
 export default function ApprovalsPage() {
   const canReview = useCan("approvals.review");
+  const toast = useToast();
   const [tab, setTab] = useState<"pending" | "approved" | "rejected">("pending");
   const [items, setItems] = useState<UnioApprovalRequest[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -40,8 +42,9 @@ export default function ApprovalsPage() {
     try {
       await reviewApproval({ id, decision });
       await refresh();
+      toast.success(decision === "approved" ? "Request approved." : "Request rejected.");
     } catch (e) {
-      alert(`Failed: ${e instanceof Error ? e.message : "unknown"}`);
+      toast.error(`Failed: ${e instanceof Error ? e.message : "unknown"}`);
     } finally {
       setBusyId(null);
     }

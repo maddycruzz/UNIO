@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { type UnioEvent, type EventType } from "@/lib/store";
 import { addEvent } from "@/lib/db";
+import { useToast } from "@/components/ui/Toast";
 
 type EventTypeId = "cultural" | "tech" | "sports" | "workshop" | "conference" | "other";
 type EventTypeOption = { id: EventTypeId; label: string; description: string; icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; gradient: string };
@@ -64,6 +65,7 @@ function formatDateTime(dt: string) {
 
 export default function NewEventPage() {
   const router = useRouter();
+  const toast = useToast();
   const [step, setStep] = useState(1);
   const [selectedType, setSelectedType] = useState<EventTypeOption | null>(null);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -132,7 +134,7 @@ export default function NewEventPage() {
         setTimeout(() => { router.push("/dashboard/events"); }, 1500);
       } catch (err: any) {
         setIsSubmitting(false);
-        if (typeof window !== "undefined") alert("An unexpected error occurred: " + err.message);
+        toast.error(`Couldn't create event: ${err?.message ?? "unknown error"}`);
       }
       return;
     }

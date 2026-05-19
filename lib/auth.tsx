@@ -430,18 +430,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const logout = useCallback(async () => {
-    if (isSupabaseConfigured() && !isOffline) {
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 5000));
-      try {
-        await Promise.race([supabase.auth.signOut(), timeoutPromise]);
-      } catch (e) {
-        console.warn("Signout network check failed, proceeding with local signout", e);
-      }
-    }
+  const logout = useCallback(() => {
+    // Optimistic: clear local state and redirect immediately so the user sees
+    // an instant response. The Supabase server-side token revoke runs in the
+    // background — if it fails (network down, cold-start), the local session
+    // is already gone and the refresh token will expire on its own.
     clearSession();
+    try { localStorage.removeItem("unio_mate_club_v1"); } catch {}
     setUser(null);
-    router.push("/login");
+    router.replace("/login");
+
+    if (isSupabaseConfigured() && !isOffline) {
+      // Fire-and-forget. No await, no race, no UI block.
+      void supabase.auth.signOut().catch((e) => {
+        console.warn("Background signOut failed (local session already cleared):", e);
+      });
+    }
   }, [router, isOffline]);
 
   return (

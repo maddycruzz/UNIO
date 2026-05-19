@@ -16,6 +16,8 @@ import {
 import { loadEvents as dbLoadEvents, deleteEvent as dbDeleteEvent } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
 import { PermissionGate } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 
 
@@ -42,6 +44,8 @@ function typeGradient(type: EventType) {
 export default function EventsPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [events, setEvents] = useState<UnioEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]>("All");
@@ -63,9 +67,27 @@ export default function EventsPage() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    await dbDeleteEvent(id);
-    setEvents((prev) => prev.filter((e) => e.id !== id));
+    const target = events.find((e) => e.id === id);
     setOpenMenu(null);
+    const ok = await confirm({
+      title: "Delete event?",
+      message: target?.name
+        ? `"${target.name}" will be moved to Trash. You can restore it from there.`
+        : "This event will be moved to Trash. You can restore it from there.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    if (!ok) return;
+
+    const prev = events;
+    setEvents((p) => p.filter((e) => e.id !== id));
+    try {
+      await dbDeleteEvent(id);
+      toast.success("Event moved to trash.");
+    } catch (e) {
+      setEvents(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't delete event.");
+    }
   };
 
   // No stagger animation on filter change — just instant opacity swap

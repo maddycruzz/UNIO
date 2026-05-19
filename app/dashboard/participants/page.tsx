@@ -17,11 +17,13 @@ import {
 } from '@/lib/db';
 import { useAuth } from '@/lib/auth';
 import { PermissionGate } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 import {
   Search, Plus, Download, QrCode, CheckCircle2, Clock,
   Filter, X, ChevronDown, Users, UserCheck,
   MoreHorizontal, Mail, Phone, Trash2, Eye, FileText,
-  Table, HardDrive, RotateCcw, Hourglass, XCircle, Award
+  Table, RotateCcw, Hourglass, XCircle, Award
 } from 'lucide-react';
 import { QRCodeCanvas as QRCode } from 'qrcode.react';
 import Link from 'next/link';
@@ -40,6 +42,8 @@ const STATUS_CONFIG: Record<ParticipantStatus, { label: string; color: string; b
 // ── Main Page ──────────────────────────────────────────────────────
 export default function ParticipantsPage() {
   const { user } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [participants, setParticipants] = useState<UnioParticipant[]>([]);
   const [events, setEvents] = useState<UnioEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<UnioEvent | null>(null);
@@ -101,24 +105,53 @@ export default function ParticipantsPage() {
     : (stats.total > 0 ? (stats.checkedIn / stats.total) * 100 : 0);
 
   const handleCheckIn = async (id: string) => {
-    await dbCheckIn(id);
-    setParticipants((prev) =>
-      prev.map((p) => p.id === id ? { ...p, status: 'checked-in' as const, checkedInAt: 'Just now' } : p)
+    const prev = participants;
+    setParticipants((p) =>
+      p.map((x) => x.id === id ? { ...x, status: 'checked-in' as const, checkedInAt: 'Just now' } : x)
     );
+    try {
+      await dbCheckIn(id);
+    } catch (e) {
+      setParticipants(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't check in.");
+    }
   };
 
   const handleRevertToRegistered = async (id: string) => {
-    await dbUpdateParticipant(id, { status: 'registered', checkedInAt: undefined });
-    setParticipants((prev) =>
-      prev.map((p) => p.id === id ? { ...p, status: 'registered' as const, checkedInAt: undefined } : p)
-    );
     setMenuOpen(null);
+    const prev = participants;
+    setParticipants((p) =>
+      p.map((x) => x.id === id ? { ...x, status: 'registered' as const, checkedInAt: undefined } : x)
+    );
+    try {
+      await dbUpdateParticipant(id, { status: 'registered', checkedInAt: undefined });
+    } catch (e) {
+      setParticipants(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't revert status.");
+    }
   };
 
   const handleDelete = async (id: string) => {
-    await dbDeleteParticipant(id);
-    setParticipants((prev) => prev.filter((p) => p.id !== id));
     setMenuOpen(null);
+    const target = participants.find((p) => p.id === id);
+    const ok = await confirm({
+      title: "Remove participant?",
+      message: target?.name
+        ? `${target.name} will be removed from this event. They can re-register if needed.`
+        : "This participant will be removed from the event.",
+      confirmLabel: "Remove",
+      variant: "danger",
+    });
+    if (!ok) return;
+    const prev = participants;
+    setParticipants((p) => p.filter((x) => x.id !== id));
+    try {
+      await dbDeleteParticipant(id);
+      toast.success("Participant removed.");
+    } catch (e) {
+      setParticipants(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't remove participant.");
+    }
   };
 
   type NewParticipantInput = Omit<UnioParticipant, 'id' | 'status' | 'registeredAt' | 'eventId'>;
@@ -262,7 +295,6 @@ export default function ParticipantsPage() {
                       { icon: FileText, label: 'Export as PDF',   action: exportPDF,   color: '#f87171' },
                       { icon: Table,    label: 'Export as Excel',  action: exportExcel, color: '#34d399' },
                       { icon: Download, label: 'Export as CSV',    action: exportCSV,   color: '#818cf8' },
-                      { icon: HardDrive,label: 'Save to Drive',    action: () => alert('Google Drive integration coming soon!'), color: '#60a5fa' },
                     ].map(({ icon: Icon, label, action, color }) => (
                       <button key={label} onClick={action}
                         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.75)', fontSize: 13, textAlign: 'left' }}

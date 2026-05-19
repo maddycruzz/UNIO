@@ -12,6 +12,7 @@ import {
 } from "@/lib/db";
 import type { UnioEvent, UnioFeedback, UnioCertificate } from "@/lib/store";
 import { useCan } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
 
 interface Props {
   eventId: string;
@@ -21,6 +22,7 @@ export function LifecyclePanel({ eventId }: Props) {
   const canTogglePublic = useCan("events.toggle_public");
   const canBroadcast = useCan("events.broadcast");
   const canIssueCerts = useCan("certificates.issue_bulk");
+  const toast = useToast();
 
   const [event, setEvent] = useState<UnioEvent | null>(null);
   const [feedback, setFeedback] = useState<UnioFeedback[]>([]);
@@ -74,10 +76,10 @@ export function LifecyclePanel({ eventId }: Props) {
     setBusyKey("certs");
     const res = await issueCertificates(eventId);
     if (res.ok) {
-      alert(`Issued ${res.issued ?? 0} new certificate${res.issued === 1 ? "" : "s"}.`);
+      toast.success(`Issued ${res.issued ?? 0} new certificate${res.issued === 1 ? "" : "s"}.`);
       await refresh();
     } else {
-      alert(`Couldn't issue certificates: ${res.error}`);
+      toast.error(`Couldn't issue certificates: ${res.error}`);
     }
     setBusyKey(null);
   };

@@ -19,6 +19,8 @@ import {
 } from "@/lib/db";
 import { useAuth } from "@/lib/auth";
 import { PermissionGate, can } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 import Link from "next/link";
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -492,6 +494,8 @@ function CalendarView({ meetings, onSelectMeeting }: { meetings: Meeting[]; onSe
 
 export default function MeetingsPage() {
   const { user } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [meetings, setMeetings]     = useState<Meeting[]>([]);
   const [events, setEvents]         = useState<UnioEvent[]>([]);
   const [view, setView]             = useState<"list" | "calendar">("list");
@@ -533,8 +537,25 @@ export default function MeetingsPage() {
   };
 
   const deleteMeeting = async (id: string) => {
-    await dbDeleteMeeting(id);
-    setMeetings((prev) => prev.filter(m => m.id !== id));
+    const target = meetings.find((m) => m.id === id);
+    const ok = await confirm({
+      title: "Delete meeting?",
+      message: target?.title
+        ? `"${target.title}" will be moved to Trash. You can restore it from there.`
+        : "This meeting will be moved to Trash. You can restore it from there.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    if (!ok) return;
+    const prev = meetings;
+    setMeetings((p) => p.filter(m => m.id !== id));
+    try {
+      await dbDeleteMeeting(id);
+      toast.success("Meeting moved to trash.");
+    } catch (e) {
+      setMeetings(prev);
+      toast.error(e instanceof Error ? e.message : "Couldn't delete meeting.");
+    }
   };
 
   // Group list by date section

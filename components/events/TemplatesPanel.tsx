@@ -11,6 +11,8 @@ import {
 } from "@/lib/db";
 import type { UnioTaskTemplate, EventType, TaskPriority } from "@/lib/store";
 import { useCan } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 interface Props { eventId: string }
 
@@ -23,6 +25,8 @@ export function TemplatesPanel({ eventId }: Props) {
   const canCreate = useCan("templates.create");
   const canApply = useCan("templates.apply");
   const canDelete = useCan("templates.delete");
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [templates, setTemplates] = useState<UnioTaskTemplate[]>([]);
   const [eventType, setEventType] = useState<EventType>("Other");
@@ -53,18 +57,31 @@ export function TemplatesPanel({ eventId }: Props) {
     const res = await applyTaskTemplate({ templateId: tplId, eventId });
     setBusyId(null);
     if (res.ok) {
-      alert(`Added ${res.inserted ?? 0} tasks from template.`);
+      toast.success(`Added ${res.inserted ?? 0} task${res.inserted === 1 ? "" : "s"} from template.`);
+      await refresh();
     } else {
-      alert(`Couldn't apply template: ${res.error}`);
+      toast.error(`Couldn't apply template: ${res.error}`);
     }
   };
 
   const onDelete = async (tplId: string) => {
-    if (!confirm("Delete this template? (Tasks already created from it stay.)")) return;
+    const ok = await confirm({
+      title: "Delete template?",
+      message: "Tasks already created from this template will stay. The template itself will be removed.",
+      confirmLabel: "Delete template",
+      variant: "danger",
+    });
+    if (!ok) return;
     setBusyId(tplId);
-    await deleteTaskTemplate(tplId);
-    setBusyId(null);
-    await refresh();
+    try {
+      await deleteTaskTemplate(tplId);
+      await refresh();
+      toast.success("Template deleted.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete template.");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const onCreate = async (e: React.FormEvent) => {
@@ -86,9 +103,10 @@ export function TemplatesPanel({ eventId }: Props) {
     });
     setBusyId(null);
     if ("ok" in res && res.ok === false) {
-      alert(`Couldn't create template: ${res.error}`);
+      toast.error(`Couldn't create template: ${res.error}`);
       return;
     }
+    toast.success("Template saved.");
     setName("");
     setTplType("Other");
     setItems([{ title: "", priority: "Medium", daysOffset: 0, division: "" }]);

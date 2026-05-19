@@ -5,6 +5,8 @@ import { Paperclip, Upload, Trash2, ExternalLink, Loader2, File as FileIcon, Ima
 import { loadEventFiles, uploadEventFile, deleteEventFile } from "@/lib/db";
 import type { UnioEventFile } from "@/lib/store";
 import { useCan } from "@/lib/permissions";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 interface Props { eventId: string }
 
@@ -23,6 +25,8 @@ function isImage(mime: string) {
 export function FilesPanel({ eventId }: Props) {
   const canUpload = useCan("files.upload");
   const canDelete = useCan("files.delete");
+  const toast = useToast();
+  const confirm = useConfirm();
   const [files, setFiles] = useState<UnioEventFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,9 +63,20 @@ export function FilesPanel({ eventId }: Props) {
   };
 
   const onDelete = async (f: UnioEventFile) => {
-    if (!confirm(`Delete ${f.name}?`)) return;
-    await deleteEventFile(f);
-    await refresh();
+    const ok = await confirm({
+      title: "Delete file?",
+      message: `"${f.name}" will be permanently removed.`,
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await deleteEventFile(f);
+      await refresh();
+      toast.success("File deleted.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete file.");
+    }
   };
 
   return (

@@ -16,6 +16,7 @@ import type {
 import { formatRelativeTime } from "@/lib/store";
 import { Markdown } from "@/components/announcements/md";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/components/ui/Toast";
 
 type TeamMember = { id: string; name: string; initials: string };
 
@@ -36,6 +37,7 @@ export function CommentDrawer({
   onOpenChange,
 }: Props) {
   const { user } = useAuth();
+  const toast = useToast();
   const [openState, setOpenState] = useState(false);
   const open = openProp ?? openState;
   const setOpen = useCallback(
@@ -128,7 +130,7 @@ export function CommentDrawer({
       await refresh();
     } catch (e) {
       console.error(e);
-      alert(`Failed to post comment: ${e instanceof Error ? e.message : "unknown error"}`);
+      toast.error(`Failed to post comment: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
       setBusy(false);
     }

@@ -712,6 +712,24 @@ export async function getDashboardStats() {
   };
 }
 
+/** Platform-wide counts for the developer admin page. Uses HEAD count queries. */
+export async function getPlatformStats() {
+  if (!isSupabaseConfigured()) {
+    const s = storeGetDashboardStats();
+    return { totalUsers: 0, totalEvents: s.totalEvents, totalTasks: s.activeTasks };
+  }
+  const [usersRes, eventsRes, tasksRes] = await Promise.all([
+    supabase.from("profiles").select("*", { count: "exact", head: true }),
+    supabase.from("events").select("*", { count: "exact", head: true }).is("deleted_at", null),
+    supabase.from("tasks").select("*", { count: "exact", head: true }).is("deleted_at", null),
+  ]);
+  return {
+    totalUsers:  usersRes.count  ?? 0,
+    totalEvents: eventsRes.count ?? 0,
+    totalTasks:  tasksRes.count  ?? 0,
+  };
+}
+
 export async function getUpcomingEvents(): Promise<UnioEvent[]> {
   if (!isSupabaseConfigured()) return storeGetUpcomingEvents();
   const { data } = await supabase
@@ -804,10 +822,42 @@ export async function removeTeamMember(userId: string): Promise<void> {
   await supabase.from("club_members").delete().eq("club_id", ctx.activeClubId).eq("user_id", userId);
 }
 
-export async function inviteTeamMember(email: string): Promise<{ success: boolean; token?: string }> {
+export type InviteRole = "mate" | "president";
+
+export type InviteInput = {
+  email: string;
+  /** Optional pre-filled name. Persisted if the schema supports it. */
+  name?: string;
+  /** Role the invitee will hold once they accept. Defaults to "mate". */
+  role?: InviteRole;
+  /** Optional personal note included in the email + landing page. */
+  message?: string;
+  /** Display name of the inviter, shown in the email. Falls back to "Your team". */
+  inviterName?: string;
+};
+
+export type InviteResult = {
+  success: boolean;
+  token?: string;
+  /** Indicates whether the email was actually sent (vs noop / failure). */
+  emailDelivered?: boolean;
+  emailError?: string;
+};
+
+export async function inviteTeamMember(input: string | InviteInput): Promise<InviteResult> {
   if (!isSupabaseConfigured()) {
     throw new Error("Supabase is not configured.");
   }
+  // Back-compat: callers used to pass a bare email string.
+  const opts: InviteInput = typeof input === "string" ? { email: input } : input;
+  const email = opts.email.trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    throw new Error("Please enter a valid email address.");
+  }
+  const role: InviteRole = opts.role === "president" ? "president" : "mate";
+  const name = opts.name?.trim() || undefined;
+  const message = opts.message?.trim() || undefined;
+
   const ctx = await withTimeout(
     getUserContext(),
     5000,
@@ -818,25 +868,79 @@ export async function inviteTeamMember(email: string): Promise<{ success: boolea
   }
 
   const token = crypto.randomUUID();
-  // We don't send invited_by because some older copies of club_invitations
-  // pre-date that column — the v5 migration added it via CREATE TABLE IF
-  // NOT EXISTS, which is a no-op when the table already existed.
-  // The supabase_rbac_migration_v5_fix.sql migration backfills it; until
-  // it's run, the field stays optional client-side.
-  const insertPromise = supabase.from("club_invitations").insert({
+  // invited_by lets the accept-invite page show "Join X's workspace" and
+  // is read by the get_invite_preview RPC. Older schemas (v2) didn't have
+  // the column; the catch below retries without it.
+  const { data: authData } = await supabase.auth.getUser();
+  const baseRow = {
     club_id: ctx.activeClubId,
     email,
     token,
-    role: "mate",
+    role,
     expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-  });
-  const { error } = await withTimeout(insertPromise, 10000, "Invite timed out — check your connection.");
+    invited_by: authData?.user?.id ?? null,
+  };
+
+  // Try with the optional columns first. If the migration hasn't been run
+  // (PGRST204 = "column does not exist"), retry without them.
+  let { error } = await withTimeout(
+    supabase.from("club_invitations").insert({
+      ...baseRow,
+      invitee_name: name,
+      personal_message: message,
+    }),
+    10000,
+    "Invite timed out — check your connection."
+  );
+  if (error && /column .* does not exist|invitee_name|personal_message|invited_by/i.test(error.message)) {
+    // Strip optional columns and retry on the bare schema.
+    const { invited_by: _ib, ...minimal } = baseRow;
+    void _ib;
+    ({ error } = await withTimeout(
+      supabase.from("club_invitations").insert(minimal),
+      10000,
+      "Invite timed out — check your connection."
+    ));
+  }
 
   if (error) {
-    console.error("inviteTeamMember insert error:", error);
+    console.warn("inviteTeamMember insert error:", error.message);
     throw new Error(error.message);
   }
-  return { success: true, token };
+
+  // Fire the email send (best-effort — token is already in the DB so the
+  // invite can be shared manually if email delivery is down).
+  let emailDelivered: boolean | undefined;
+  let emailError: string | undefined;
+  try {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const acceptUrl = `${origin}/auth/accept-invite?token=${token}`;
+    const res = await fetch("/api/team/invite-email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token,
+        email,
+        name,
+        role,
+        message,
+        acceptUrl,
+        inviterName: opts.inviterName || "Your team",
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.ok === false) {
+      emailDelivered = false;
+      emailError = body?.error || `HTTP ${res.status}`;
+    } else {
+      emailDelivered = body.mode === "resend" || body.mode === "smtp";
+    }
+  } catch (e) {
+    emailDelivered = false;
+    emailError = e instanceof Error ? e.message : "network_error";
+  }
+
+  return { success: true, token, emailDelivered, emailError };
 }
 
 export async function acceptTeamInvite(token: string): Promise<{ success: boolean; error?: string }> {
@@ -855,6 +959,39 @@ export async function acceptTeamInvite(token: string): Promise<{ success: boolea
   }
 
   return { success: true };
+}
+
+export type InvitePreview = {
+  email: string;
+  role: InviteRole;
+  inviteeName?: string;
+  personalMessage?: string;
+  inviterName?: string;
+  expiresAt: string;
+};
+
+/** Fetch safe preview details for an invitation token. Works pre-auth via
+ *  the `get_invite_preview` SECURITY DEFINER RPC. Returns null if the token
+ *  is invalid, expired, or already accepted. */
+export async function getInvitePreview(token: string): Promise<InvitePreview | null> {
+  if (!isSupabaseConfigured() || !token) return null;
+  const { data, error } = await supabase.rpc("get_invite_preview", { invite_token: token });
+  if (error) {
+    // Either the RPC isn't deployed yet or RLS blocked us. Either way: no preview.
+    console.warn("getInvitePreview failed:", error.message);
+    return null;
+  }
+  // RPC returns an array (TABLE return type). Take the first row.
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return {
+    email: row.email,
+    role: row.role,
+    inviteeName: row.invitee_name || undefined,
+    personalMessage: row.personal_message || undefined,
+    inviterName: row.inviter_name || undefined,
+    expiresAt: row.expires_at,
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -900,7 +1037,10 @@ export async function loadAnnouncements(): Promise<UnioAnnouncement[]> {
     .order("pinned", { ascending: false })
     .order("created_at", { ascending: false });
   if (error) {
-    console.error("loadAnnouncements failed:", error.message);
+    // Transient network errors (Safari: "Load failed", others: "fetch failed")
+    // are expected on cold-start and flaky wifi — we already fall back to the
+    // local cache, so don't shout in the console.
+    console.warn("loadAnnouncements falling back to cache:", error.message);
     return storeLoadAnnouncements();
   }
   if (!data) return storeLoadAnnouncements();
@@ -1002,8 +1142,16 @@ export async function deleteAnnouncement(id: string): Promise<void> {
     storeSaveAnnouncements(storeLoadAnnouncements().filter((a) => a.id !== id));
     return;
   }
-  const { error } = await supabase.from("announcements").delete().eq("id", id);
+  // Hard cap the delete so a cold-start Supabase can't hang the UI forever.
+  const { error } = await withTimeout(
+    supabase.from("announcements").delete().eq("id", id),
+    10000,
+    "Delete is taking longer than usual. Try again in a moment."
+  );
   if (error) throw new Error(error.message);
+  // Mirror to localStorage so the row disappears immediately even if a
+  // subsequent re-fetch is delayed.
+  storeSaveAnnouncements(storeLoadAnnouncements().filter((a) => a.id !== id));
   notifyChange();
 }
 
@@ -1073,7 +1221,7 @@ export async function loadCommentsFor(parentType: CommentParentType, parentId: s
     .eq("parent_id", parentId)
     .order("created_at", { ascending: true });
   if (error) {
-    console.error("loadCommentsFor failed:", error.message);
+    console.warn("loadCommentsFor falling back:", error.message);
     return storeLoadComments(parentType, parentId);
   }
   if (!data) return storeLoadComments(parentType, parentId);
