@@ -20,13 +20,94 @@ import { PermissionGate } from "@/lib/permissions";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import {
-  Search, Plus, Download, QrCode, CheckCircle2, Clock,
+  Search, Plus, Download, Upload, QrCode, CheckCircle2, Clock,
   Filter, X, ChevronDown, Users, UserCheck,
   MoreHorizontal, Mail, Phone, Trash2, Eye, FileText,
-  Table, RotateCcw, Hourglass, XCircle, Award
+  Table, RotateCcw, Hourglass, XCircle, Award, AlertCircle
 } from 'lucide-react';
 import { QRCodeCanvas as QRCode } from 'qrcode.react';
 import Link from 'next/link';
+
+// ── Import types & parser ─────────────────────────────────────────
+type NewParticipantRow = {
+  name: string;
+  email: string;
+  phone?: string;
+  rollNo?: string;
+  dept?: string;
+};
+
+type ImportPreview = {
+  fileName: string;
+  valid: NewParticipantRow[];
+  skippedDupes: NewParticipantRow[];
+  invalid: { row: NewParticipantRow; reason: string }[];
+};
+
+const HEADER_ALIASES: Record<keyof NewParticipantRow, string[]> = {
+  name:   ['name', 'full name', 'fullname', 'participant name', 'participant', 'student name'],
+  email:  ['email', 'e-mail', 'mail', 'email address', 'email id', 'emailid'],
+  phone:  ['phone', 'mobile', 'contact', 'phone number', 'mobile number', 'contact number'],
+  rollNo: ['rollno', 'roll no', 'roll number', 'roll', 'reg no', 'regno', 'registration no', 'registration number', 'student id', 'studentid'],
+  dept:   ['dept', 'department', 'branch', 'stream'],
+};
+
+const normalize = (s: string) => s.trim().toLowerCase().replace(/[_\s.-]+/g, ' ');
+
+function mapRow(raw: unknown): NewParticipantRow {
+  const lookup: Record<string, string> = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (v == null) continue;
+      if (typeof v === 'object') continue; // skip nested objects/arrays
+      lookup[normalize(k)] = String(v).trim();
+    }
+  }
+  const pick = (field: keyof NewParticipantRow): string => {
+    for (const alias of HEADER_ALIASES[field]) {
+      const key = normalize(alias);
+      if (lookup[key]) return lookup[key];
+    }
+    return '';
+  };
+  return {
+    name:   pick('name'),
+    email:  pick('email'),
+    phone:  pick('phone'),
+    rollNo: pick('rollNo'),
+    dept:   pick('dept'),
+  };
+}
+
+const isRowEmpty = (r: NewParticipantRow) =>
+  !r.name && !r.email && !r.phone && !r.rollNo && !r.dept;
+
+async function parseParticipantFile(file: File): Promise<NewParticipantRow[]> {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'json') {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    let arr: unknown[] = [];
+    if (Array.isArray(parsed)) arr = parsed;
+    else if (parsed && typeof parsed === 'object') {
+      // Look for the first array-valued property (participants, data, rows, items, …)
+      for (const v of Object.values(parsed as Record<string, unknown>)) {
+        if (Array.isArray(v)) { arr = v; break; }
+      }
+    }
+    return arr.map(mapRow).filter(r => !isRowEmpty(r));
+  }
+  // CSV / XLSX / XLS / ODS — handled by SheetJS
+  const XLSX = await import('xlsx');
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  if (!sheet) return [];
+  // raw: false → coerce numbers/dates to formatted strings so phones/roll-nos
+  // don't get mangled into scientific notation or date serials.
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+  return rows.map(mapRow).filter(r => !isRowEmpty(r));
+}
 
 // ── Constants ──────────────────────────────────────────────────────
 const DEPTS = ['All', 'CS', 'ECE', 'IT', 'MECH', 'CIVIL'];
@@ -56,6 +137,9 @@ export default function ParticipantsPage() {
   const [showEventDropdown, setShowEventDropdown] = useState(false);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -169,6 +253,98 @@ export default function ParticipantsPage() {
     setShowAddModal(false);
   };
 
+  // ── Import (CSV / XLSX / XLS / JSON) ──
+  const openFilePicker = () => fileInputRef.current?.click();
+
+  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // reset so picking the same file again re-triggers
+    if (!file) return;
+    if (!selectedEvent) {
+      toast.error('Select an event first.');
+      return;
+    }
+    try {
+      const rows = await parseParticipantFile(file);
+      if (rows.length === 0) {
+        toast.error('No rows found in that file.');
+        return;
+      }
+      const existingEmails = new Set(
+        eventParticipants.map(p => p.email.trim().toLowerCase()).filter(Boolean)
+      );
+      const valid: NewParticipantRow[] = [];
+      const skippedDupes: NewParticipantRow[] = [];
+      const invalid: { row: NewParticipantRow; reason: string }[] = [];
+      const seenInFile = new Set<string>();
+
+      for (const row of rows) {
+        if (!row.name || !row.email) {
+          invalid.push({ row, reason: 'Missing name or email' });
+          continue;
+        }
+        const emailKey = row.email.trim().toLowerCase();
+        if (seenInFile.has(emailKey)) {
+          skippedDupes.push(row);
+          continue;
+        }
+        seenInFile.add(emailKey);
+        if (existingEmails.has(emailKey)) {
+          skippedDupes.push(row);
+          continue;
+        }
+        valid.push(row);
+      }
+
+      setImportPreview({ fileName: file.name, valid, skippedDupes, invalid });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to parse file.');
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (!importPreview || !selectedEvent) return;
+    setIsImporting(true);
+    const remainingCapacity = selectedEvent.capacity != null
+      ? Math.max(0, selectedEvent.capacity - eventParticipants.length)
+      : Infinity;
+    const toInsert = importPreview.valid.slice(0, remainingCapacity);
+    const capped = importPreview.valid.length - toInsert.length;
+
+    const inserted: UnioParticipant[] = [];
+    const failed: string[] = [];
+    for (const [i, row] of toInsert.entries()) {
+      const newP: UnioParticipant = {
+        id: `p${Date.now()}_${i}`,
+        name: row.name,
+        email: row.email,
+        phone: row.phone || '',
+        rollNo: row.rollNo || '',
+        dept: row.dept || '',
+        status: 'registered',
+        registeredAt: 'Just now',
+        eventId: selectedEvent.id,
+      };
+      try {
+        await dbAddParticipant(newP);
+        inserted.push(newP);
+      } catch (err) {
+        failed.push(row.email);
+      }
+    }
+    if (inserted.length) setParticipants(prev => [...inserted, ...prev]);
+    setIsImporting(false);
+    setImportPreview(null);
+
+    const parts = [`${inserted.length} imported`];
+    if (importPreview.skippedDupes.length) parts.push(`${importPreview.skippedDupes.length} duplicate(s) skipped`);
+    if (importPreview.invalid.length) parts.push(`${importPreview.invalid.length} invalid skipped`);
+    if (capped > 0) parts.push(`${capped} skipped (capacity)`);
+    if (failed.length) parts.push(`${failed.length} failed`);
+    if (inserted.length > 0) toast.success(parts.join(' · '));
+    else toast.error(parts.join(' · '));
+  };
+
   // ── Export CSV ──
   const exportCSV = () => {
     const headers = ['Name', 'Email', 'Phone', 'Roll No', 'Department', 'Status', 'Registered At', 'Checked In At'];
@@ -280,6 +456,22 @@ export default function ParticipantsPage() {
             <div style={{ padding: '8px 14px', borderRadius: 10, backgroundColor: isFull ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)', border: `1px solid ${isFull ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)'}`, fontSize: 12, fontWeight: 700, color: isFull ? '#ef4444' : 'rgba(255,255,255,0.5)' }}>
               {isFull ? '🔒 Full' : `${stats.total} / ${capacityLabel}`}
             </div>
+
+            {/* Import button */}
+            <PermissionGate action="participants.create_walkin">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls,.ods,.json,text/csv,application/json,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={handleFilePicked}
+                style={{ display: 'none' }}
+              />
+              <button onClick={openFilePicker} disabled={isFull || !selectedEvent}
+                title={!selectedEvent ? 'Select an event first' : isFull ? 'Event is at capacity' : 'Import participants from CSV / Excel / JSON'}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: (isFull || !selectedEvent) ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 600, cursor: (isFull || !selectedEvent) ? 'not-allowed' : 'pointer' }}>
+                <Upload size={14} /> Import
+              </button>
+            </PermissionGate>
 
             {/* Export dropdown */}
             <div style={{ position: 'relative' }}>
@@ -506,6 +698,16 @@ export default function ParticipantsPage() {
       <AnimatePresence>
         {showQR && <QRModal participant={showQR} onClose={() => setShowQR(null)} />}
       </AnimatePresence>
+      <AnimatePresence>
+        {importPreview && (
+          <ImportModal
+            preview={importPreview}
+            isImporting={isImporting}
+            onCancel={() => setImportPreview(null)}
+            onConfirm={handleImportConfirm}
+          />
+        )}
+      </AnimatePresence>
 
       {menuOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setMenuOpen(null)} />}
       {showEventDropdown && <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setShowEventDropdown(false)} />}
@@ -666,5 +868,94 @@ function QRModal({ participant: p, onClose }: { participant: UnioParticipant; on
         </button>
       </motion.div>
     </motion.div>
+  );
+}
+
+// ── Import Modal ──────────────────────────────────────────────────
+function ImportModal({ preview, isImporting, onCancel, onConfirm }: {
+  preview: ImportPreview;
+  isImporting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { fileName, valid, skippedDupes, invalid } = preview;
+  const sample = valid.slice(0, 5);
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 250, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+      onClick={isImporting ? undefined : onCancel}>
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        onClick={e => e.stopPropagation()}
+        style={{ backgroundColor: '#161922', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: 28, width: '100%', maxWidth: 640, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#fff' }}>Import preview</h2>
+          <button onClick={onCancel} disabled={isImporting} style={{ background: 'none', border: 'none', cursor: isImporting ? 'not-allowed' : 'pointer', color: 'rgba(255,255,255,0.4)' }}><X size={18} /></button>
+        </div>
+        <p style={{ margin: '0 0 18px', fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{fileName}</p>
+
+        <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+          <Stat label="Ready to import" value={valid.length} color="#10B981" />
+          <Stat label="Duplicates skipped" value={skippedDupes.length} color="#F59E0B" />
+          <Stat label="Invalid skipped" value={invalid.length} color="#EF4444" />
+        </div>
+
+        {valid.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 14, borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#FCA5A5', fontSize: 13, marginBottom: 16 }}>
+            <AlertCircle size={16} /> No valid rows. Make sure your file has <strong style={{ margin: '0 4px' }}>Name</strong> and <strong style={{ marginLeft: 4 }}>Email</strong> columns.
+          </div>
+        )}
+
+        <div style={{ overflowY: 'auto', flex: 1, marginBottom: 18, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10 }}>
+          {sample.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ backgroundColor: 'rgba(255,255,255,0.04)', textAlign: 'left' }}>
+                  {['Name', 'Email', 'Phone', 'Roll No', 'Dept'].map(h => (
+                    <th key={h} style={{ padding: '10px 12px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.4)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sample.map((r, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.8)' }}>
+                    <td style={{ padding: '8px 12px' }}>{r.name}</td>
+                    <td style={{ padding: '8px 12px' }}>{r.email}</td>
+                    <td style={{ padding: '8px 12px' }}>{r.phone || '—'}</td>
+                    <td style={{ padding: '8px 12px' }}>{r.rollNo || '—'}</td>
+                    <td style={{ padding: '8px 12px' }}>{r.dept || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {valid.length > sample.length && (
+            <p style={{ margin: 0, padding: '10px 12px', fontSize: 11, color: 'rgba(255,255,255,0.4)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+              + {valid.length - sample.length} more rows…
+            </p>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} disabled={isImporting}
+            style={{ flex: 1, padding: '11px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: 600, cursor: isImporting ? 'not-allowed' : 'pointer' }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={isImporting || valid.length === 0}
+            style={{ flex: 1, padding: '11px', borderRadius: 10, backgroundColor: valid.length === 0 ? 'rgba(99,102,241,0.3)' : '#6366F1', border: 'none', color: '#fff', fontSize: 14, fontWeight: 700, cursor: isImporting || valid.length === 0 ? 'not-allowed' : 'pointer', opacity: isImporting ? 0.6 : 1 }}>
+            {isImporting ? 'Importing…' : `Import ${valid.length}`}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{ flex: 1, minWidth: 130, padding: '10px 14px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+      <p style={{ margin: 0, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.4)' }}>{label}</p>
+      <p style={{ margin: '4px 0 0', fontSize: 20, fontWeight: 800, color }}>{value}</p>
+    </div>
   );
 }
