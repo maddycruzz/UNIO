@@ -94,6 +94,18 @@ function notifyChange() {
   }
 }
 
+// ── Stale-while-revalidate helpers ────────────────────────────────
+// Used by loaders so pages render from localStorage cache instantly,
+// then re-render when the network refresh lands.
+const SWR_COOLDOWN_MS = 1500;
+const swrLastRefresh: Record<string, number> = {};
+function swrShouldRefresh(key: string): boolean {
+  const last = swrLastRefresh[key] ?? 0;
+  if (Date.now() - last < SWR_COOLDOWN_MS) return false;
+  swrLastRefresh[key] = Date.now();
+  return true;
+}
+
 // Timeout wrapper. Accepts PromiseLike so Supabase's PostgrestBuilder works directly.
 export const withTimeout = <T>(p: PromiseLike<T>, ms: number, errorMessage: string): Promise<T> => {
   let timeoutId: NodeJS.Timeout;
@@ -375,16 +387,25 @@ function participantToRow(p: Partial<UnioParticipant>, organizerId?: string): Re
 
 export async function loadEvents(): Promise<UnioEvent[]> {
   if (!isSupabaseConfigured()) return storeLoadEvents().filter((e) => !e.deletedAt);
-  const { data, error } = await supabase
-    .from("events")
-    .select("*")
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
-  if (error || !data) return storeLoadEvents().filter((e) => !e.deletedAt);
-  const events = data.map(rowToEvent);
-  // Keep localStorage in sync for offline fallback
-  storeSaveEvents(events);
-  return events;
+  const fetchFresh = async (): Promise<UnioEvent[] | null> => {
+    const { data, error } = await supabase
+      .from("events")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    if (error || !data) return null;
+    const events = data.map(rowToEvent);
+    storeSaveEvents(events);
+    return events.filter((e) => !e.deletedAt);
+  };
+  const cached = storeLoadEvents().filter((e) => !e.deletedAt);
+  if (cached.length > 0) {
+    if (swrShouldRefresh("events")) {
+      void fetchFresh().then((fresh) => { if (fresh) notifyChange(); }).catch(() => {});
+    }
+    return cached;
+  }
+  return (await fetchFresh()) ?? cached;
 }
 
 export async function addEvent(event: UnioEvent): Promise<void> {
@@ -450,15 +471,25 @@ export async function getEventById(id: string): Promise<UnioEvent | undefined> {
 
 export async function loadTasks(): Promise<UnioTask[]> {
   if (!isSupabaseConfigured()) return storeLoadTasks().filter((t) => !t.deletedAt);
-  const { data, error } = await supabase
-    .from("tasks")
-    .select("*")
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
-  if (error || !data) return storeLoadTasks().filter((t) => !t.deletedAt);
-  const tasks = data.map(rowToTask);
-  storeSaveTasks(tasks);
-  return tasks;
+  const fetchFresh = async (): Promise<UnioTask[] | null> => {
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    if (error || !data) return null;
+    const tasks = data.map(rowToTask);
+    storeSaveTasks(tasks);
+    return tasks.filter((t) => !t.deletedAt);
+  };
+  const cached = storeLoadTasks().filter((t) => !t.deletedAt);
+  if (cached.length > 0) {
+    if (swrShouldRefresh("tasks")) {
+      void fetchFresh().then((fresh) => { if (fresh) notifyChange(); }).catch(() => {});
+    }
+    return cached;
+  }
+  return (await fetchFresh()) ?? cached;
 }
 
 export async function addTask(task: UnioTask): Promise<void> {
@@ -521,15 +552,25 @@ export async function deleteTask(id: string): Promise<void> {
 
 export async function loadMeetings(): Promise<UnioMeeting[]> {
   if (!isSupabaseConfigured()) return storeLoadMeetings().filter((m) => !m.deletedAt);
-  const { data, error } = await supabase
-    .from("meetings")
-    .select("*")
-    .is("deleted_at", null)
-    .order("date", { ascending: true });
-  if (error || !data) return storeLoadMeetings().filter((m) => !m.deletedAt);
-  const meetings = data.map(rowToMeeting);
-  storeSaveMeetings(meetings);
-  return meetings;
+  const fetchFresh = async (): Promise<UnioMeeting[] | null> => {
+    const { data, error } = await supabase
+      .from("meetings")
+      .select("*")
+      .is("deleted_at", null)
+      .order("date", { ascending: true });
+    if (error || !data) return null;
+    const meetings = data.map(rowToMeeting);
+    storeSaveMeetings(meetings);
+    return meetings.filter((m) => !m.deletedAt);
+  };
+  const cached = storeLoadMeetings().filter((m) => !m.deletedAt);
+  if (cached.length > 0) {
+    if (swrShouldRefresh("meetings")) {
+      void fetchFresh().then((fresh) => { if (fresh) notifyChange(); }).catch(() => {});
+    }
+    return cached;
+  }
+  return (await fetchFresh()) ?? cached;
 }
 
 export async function addMeeting(meeting: UnioMeeting): Promise<void> {
@@ -592,14 +633,24 @@ export async function saveMeetings(meetings: UnioMeeting[]): Promise<void> {
 
 export async function loadParticipants(): Promise<UnioParticipant[]> {
   if (!isSupabaseConfigured()) return storeLoadParticipants();
-  const { data, error } = await supabase
-    .from("participants")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (error || !data) return storeLoadParticipants();
-  const participants = data.map(rowToParticipant);
-  storeSaveParticipants(participants);
-  return participants;
+  const fetchFresh = async (): Promise<UnioParticipant[] | null> => {
+    const { data, error } = await supabase
+      .from("participants")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error || !data) return null;
+    const participants = data.map(rowToParticipant);
+    storeSaveParticipants(participants);
+    return participants;
+  };
+  const cached = storeLoadParticipants();
+  if (cached.length > 0) {
+    if (swrShouldRefresh("participants")) {
+      void fetchFresh().then((fresh) => { if (fresh) notifyChange(); }).catch(() => {});
+    }
+    return cached;
+  }
+  return (await fetchFresh()) ?? cached;
 }
 
 export async function getParticipantsForEvent(eventId: string): Promise<UnioParticipant[]> {
@@ -676,20 +727,30 @@ export async function saveParticipants(participants: UnioParticipant[]): Promise
 
 export async function loadActivity(): Promise<ActivityItem[]> {
   if (!isSupabaseConfigured()) return storeLoadActivity();
-  const { data, error } = await supabase
-    .from("activity_log")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(20);
-  if (error || !data) return storeLoadActivity();
-  const items: ActivityItem[] = data.map(row => ({
-    id:        row.id as string,
-    title:     row.title as string,
-    meta:      row.meta as string,
-    timestamp: new Date(row.created_at as string).getTime(),
-  }));
-  storeSaveActivity(items);
-  return items;
+  const fetchFresh = async (): Promise<ActivityItem[] | null> => {
+    const { data, error } = await supabase
+      .from("activity_log")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error || !data) return null;
+    const items: ActivityItem[] = data.map(row => ({
+      id:        row.id as string,
+      title:     row.title as string,
+      meta:      row.meta as string,
+      timestamp: new Date(row.created_at as string).getTime(),
+    }));
+    storeSaveActivity(items);
+    return items;
+  };
+  const cached = storeLoadActivity();
+  if (cached.length > 0) {
+    if (swrShouldRefresh("activity")) {
+      void fetchFresh().then((fresh) => { if (fresh) notifyChange(); }).catch(() => {});
+    }
+    return cached;
+  }
+  return (await fetchFresh()) ?? cached;
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────
@@ -1020,63 +1081,61 @@ function rowToAnnouncement(row: Record<string, unknown>): UnioAnnouncement {
 
 export async function loadAnnouncements(): Promise<UnioAnnouncement[]> {
   if (!isSupabaseConfigured()) return storeLoadAnnouncements();
-  const ctx = await getUserContext();
-  if (!ctx) return storeLoadAnnouncements();
 
-  // Fetch announcements (no PostgREST embed — the FK is to auth.users,
-  // not to public.profiles, so the embed route doesn't exist). We hydrate
-  // author names with a separate batched profiles lookup.
-  //
-  // We also do NOT filter expires_at server-side because PostgREST's .or()
-  // with a fully-precision ISO timestamp can silently fail — expired rows
-  // are cheap, just hide them client-side.
-  const { data, error } = await supabase
-    .from("announcements")
-    .select("*")
-    .eq("club_id", ctx.activeClubId)
-    .order("pinned", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (error) {
-    // Transient network errors (Safari: "Load failed", others: "fetch failed")
-    // are expected on cold-start and flaky wifi — we already fall back to the
-    // local cache, so don't shout in the console.
-    console.warn("loadAnnouncements falling back to cache:", error.message);
-    return storeLoadAnnouncements();
-  }
-  if (!data) return storeLoadAnnouncements();
-
-  // Batched profile lookup for author names.
-  const authorIds = Array.from(new Set(data.map((r) => (r as { author_id: string }).author_id))).filter(Boolean);
-  const profileByAuthor = new Map<string, { name?: string; initials?: string }>();
-  if (authorIds.length > 0) {
-    const { data: profs } = await supabase
-      .from("profiles")
-      .select("id, name, initials")
-      .in("id", authorIds);
-    for (const p of profs ?? []) {
-      profileByAuthor.set(p.id as string, { name: p.name as string, initials: p.initials as string });
+  const fetchFresh = async (): Promise<UnioAnnouncement[] | null> => {
+    const ctx = await getUserContext();
+    if (!ctx) return null;
+    const { data, error } = await supabase
+      .from("announcements")
+      .select("*")
+      .eq("club_id", ctx.activeClubId)
+      .order("pinned", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.warn("loadAnnouncements falling back to cache:", error.message);
+      return null;
     }
-  }
+    if (!data) return null;
+    const authorIds = Array.from(new Set(data.map((r) => (r as { author_id: string }).author_id))).filter(Boolean);
+    const profileByAuthor = new Map<string, { name?: string; initials?: string }>();
+    if (authorIds.length > 0) {
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("id, name, initials")
+        .in("id", authorIds);
+      for (const p of profs ?? []) {
+        profileByAuthor.set(p.id as string, { name: p.name as string, initials: p.initials as string });
+      }
+    }
+    const now = Date.now();
+    const items: UnioAnnouncement[] = data
+      .filter((row) => {
+        const ex = (row as { expires_at?: string }).expires_at;
+        if (!ex) return true;
+        const t = new Date(ex).getTime();
+        return isNaN(t) || t > now;
+      })
+      .map((row) => {
+        const r = row as Record<string, unknown>;
+        const profile = profileByAuthor.get(r.author_id as string);
+        return {
+          ...rowToAnnouncement(r),
+          authorName: profile?.name,
+          authorInitials: profile?.initials,
+        };
+      });
+    storeSaveAnnouncements(items);
+    return items;
+  };
 
-  const now = Date.now();
-  const items: UnioAnnouncement[] = data
-    .filter((row) => {
-      const ex = (row as { expires_at?: string }).expires_at;
-      if (!ex) return true;
-      const t = new Date(ex).getTime();
-      return isNaN(t) || t > now;
-    })
-    .map((row) => {
-      const r = row as Record<string, unknown>;
-      const profile = profileByAuthor.get(r.author_id as string);
-      return {
-        ...rowToAnnouncement(r),
-        authorName: profile?.name,
-        authorInitials: profile?.initials,
-      };
-    });
-  storeSaveAnnouncements(items);
-  return items;
+  const cached = storeLoadAnnouncements();
+  if (cached.length > 0) {
+    if (swrShouldRefresh("announcements")) {
+      void fetchFresh().then((fresh) => { if (fresh) notifyChange(); }).catch(() => {});
+    }
+    return cached;
+  }
+  return (await fetchFresh()) ?? cached;
 }
 
 export async function addAnnouncement(
