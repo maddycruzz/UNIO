@@ -817,6 +817,24 @@ export async function loadTeamMembers(): Promise<TeamMember[]> {
   const ctx = await getUserContext();
   if (!ctx) return [];
 
+  // Primary path: SECURITY DEFINER RPC returns the whole team in one call,
+  // bypassing the profiles RLS policy that on some installs hides mates
+  // from the president (when the share_club clause isn't applied).
+  const rpcRes = await supabase.rpc("get_team_members");
+  if (!rpcRes.error && Array.isArray(rpcRes.data)) {
+    return (rpcRes.data as Array<{
+      id: string; name: string; email: string | null; role: UserRole; initials: string;
+    }>).map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email || "",
+      role: r.role,
+      initials: r.initials,
+    }));
+  }
+  // Fallback to the older direct-query path (works only when profiles
+  // RLS allows the president to read mate rows).
+
   // President profile (single row keyed by auth.uid()).
   const { data: presidentData } = await supabase
     .from("profiles")
