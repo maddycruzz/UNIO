@@ -1014,11 +1014,23 @@ export async function acceptTeamInvite(token: string): Promise<{ success: boolea
     return { success: false, error: "not_logged_in" };
   }
 
-  const { error } = await supabase.rpc("accept_invitation", { invite_token: token });
+  const { data, error } = await supabase.rpc("accept_invitation", { invite_token: token });
   if (error) {
     return { success: false, error: error.message };
   }
 
+  // v5+ of the RPC returns JSONB { ok, error?, club_id?, role? } and signals
+  // soft-failures (already_accepted, expired, email_mismatch) via ok:false
+  // rather than throwing. v2 returned bare boolean — treat that as success.
+  if (data && typeof data === "object" && "ok" in data) {
+    const payload = data as { ok: boolean; error?: string };
+    if (!payload.ok) {
+      return { success: false, error: payload.error || "accept_failed" };
+    }
+  }
+
+  // Notify any open dashboards that team/data may have changed.
+  notifyChange();
   return { success: true };
 }
 

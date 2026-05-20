@@ -86,12 +86,44 @@ function saveSession(user: AuthUser): void {
   localStorage.setItem(SESSION_KEY, JSON.stringify(user));
 }
 
+// Data-layer cache keys mirrored from lib/store.ts. Cleared on logout / on
+// identity change so a fresh signup never inherits the previous user's
+// announcements, events, tasks, etc. through localStorage.
+const DATA_CACHE_KEYS = [
+  "unio_events_v2",
+  "unio_tasks_v2",
+  "unio_meetings_v2",
+  "unio_participants_v2",
+  "unio_activity_v1",
+  "unio_announcements_v1",
+  "unio_announcement_reads_v1",
+  "unio_comments_v1",
+  "unio_notifications_v1",
+  "unio_feedback_v1",
+  "unio_certificates_v1",
+  "unio_budgets_v1",
+  "unio_sponsors_v1",
+  "unio_event_files_v1",
+  "unio_task_templates_v1",
+  "unio_task_deps_v1",
+  "unio_approvals_v1",
+  "unio_seeded_v3", // re-seed demo data if needed for a new local-only user
+];
+
+function clearDataCaches(): void {
+  if (typeof window === "undefined") return;
+  for (const k of DATA_CACHE_KEYS) {
+    try { localStorage.removeItem(k); } catch { /* quota */ }
+  }
+}
+
 function clearSession(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem(SESSION_KEY);
   // Bust any per-user caches keyed off the previous identity so the next
   // login doesn't read the wrong club_id, etc.
   localStorage.removeItem("unio_mate_club_v1");
+  clearDataCaches();
 }
 
 /** Convert a Supabase user into our app's AuthUser shape */
@@ -202,6 +234,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch (err) {
         console.warn("Auth hydration failed, falling back to offline demo mode:", err);
+        // If Supabase rejected the stored refresh token, the token will stay
+        // in localStorage and fail on every reload. Purge it so the next
+        // hydration starts clean.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/refresh token|invalid token|jwt/i.test(msg)) {
+          try { await supabase.auth.signOut({ scope: "local" }); } catch { /* best-effort */ }
+          clearSession();
+        }
         if (!cancelled) {
           setIsOffline(true);
           setUser(loadSession()); // fallback to demo local storage
@@ -230,7 +270,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session?.user) {
           const authUser = supabaseUserToAuthUser(session.user);
           const cached = loadSession();
-          authUser.role = cached?.id === authUser.id ? (cached.role ?? "mate") : "mate";
+          // Identity changed (different user signed in on this browser) —
+          // wipe stale data caches so SWR doesn't serve the previous user's
+          // announcements/events/etc on first paint.
+          if (cached && cached.id !== authUser.id) {
+            clearDataCaches();
+            authUser.role = "mate";
+          } else {
+            authUser.role = cached?.id === authUser.id ? (cached.role ?? "mate") : "mate";
+          }
           saveSession(authUser);
           setUser(authUser);
 
